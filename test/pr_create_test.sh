@@ -98,6 +98,17 @@ fi
 grep -Fq 'refusing to use the default branch' "$test_dir/default-error" || fail "default-branch error was unclear"
 git -C "$clone_dir" restore tracked.txt
 
+if (
+    cd "$clone_dir"
+    pr-create release 2>"$test_dir/explicit-base-error"
+); then
+    fail "pr-create accepted the default branch with an explicit base"
+fi
+grep -Fq 'refusing to use the default branch' "$test_dir/explicit-base-error" || fail "explicit-base default-branch error was unclear"
+if grep -Fq 'pr create ' "$fake_gh_log"; then
+    fail "pr-create reached GitHub from the default branch"
+fi
+
 git -C "$clone_dir" switch feature/example >/dev/null
 printf 'dirty\n' >>"$clone_dir/tracked.txt"
 if (

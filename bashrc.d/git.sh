@@ -212,14 +212,11 @@ pr-create() {
     _dev_git_require_topology || return 1
     _dev_git_require_clean || return 1
     _dev_git_require_gh || return 1
+    _dev_git_require_feature_branch || return 1
 
     local base branch repository owner
     base="${1:-$(_dev_git_default_branch)}" || return 1
     branch=$(_dev_git_current_branch) || return 1
-    if [[ "$branch" == "$base" ]]; then
-        _dev_git_error "refusing to open a pull request from the default branch"
-        return 1
-    fi
     repository=$(_dev_git_upstream_repo) || return 1
     owner=$(_dev_git_origin_owner) || return 1
     git push --set-upstream origin HEAD || return 1
