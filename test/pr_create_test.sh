@@ -61,9 +61,8 @@ git -C "$clone_dir" symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstrea
 
 origin_url=https://github.com/thelarkbot/project.git
 upstream_url=git@github.com:upstream/project.git
-git -C "$clone_dir" config "url.${fork_repo}.insteadOf" "$origin_url"
-git -C "$clone_dir" config "url.${upstream_repo}.insteadOf" "$upstream_url"
 git -C "$clone_dir" remote set-url origin "$origin_url"
+git -C "$clone_dir" remote set-url --push origin "$fork_repo"
 git -C "$clone_dir" remote set-url upstream "$upstream_url"
 
 export FAKE_GH_LOG="$fake_gh_log"
@@ -71,8 +70,14 @@ export PATH="$fake_bin:$PATH"
 
 [[ "$(_dev_git_parse_remote 'https://github.com/upstream/project.git')" == github.com/upstream/project ]] || fail "HTTPS remote was not parsed"
 [[ "$(_dev_git_parse_remote 'ssh://git@github.com/upstream/project.git')" == github.com/upstream/project ]] || fail "SSH URL remote was not parsed"
+[[ "$(_dev_git_parse_remote 'ssh://git@ssh.github.com:443/upstream/project.git')" == ssh.github.com/upstream/project ]] || fail "SSH URL remote with a port was not parsed"
+[[ "$(_dev_git_parse_remote 'https://github.com:8443/upstream/project.git')" == github.com/upstream/project ]] || fail "HTTPS remote with a port was not parsed"
 [[ "$(_dev_git_parse_remote 'git@github.com:upstream/project.git')" == github.com/upstream/project ]] || fail "SCP-style SSH remote was not parsed"
 [[ "$(_dev_git_parse_remote 'github.example.com/upstream/project')" == github.example.com/upstream/project ]] || fail "host selector was not parsed"
+if _dev_git_parse_remote 'ssh://git@github.com:not-a-port/upstream/project.git' 2>"$test_dir/invalid-port-error"; then
+    fail "nonnumeric remote port was accepted"
+fi
+grep -Fq 'remote URL must identify HOST/OWNER/REPOSITORY' "$test_dir/invalid-port-error" || fail "invalid-port error was unclear"
 if _dev_git_parse_remote 'https://github.com/upstream/too/many/parts.git' 2>"$test_dir/parser-error"; then
     fail "invalid remote path was accepted"
 fi
@@ -117,6 +122,7 @@ git -C "$clone_dir" ls-files --error-unmatch untracked.txt >/dev/null || fail "-
 previous_head=$(git -C "$clone_dir" rev-parse HEAD)
 printf 'commit before failed push\n' >>"$clone_dir/tracked.txt"
 git -C "$clone_dir" remote set-url origin "$test_dir/missing-fork.git"
+git -C "$clone_dir" remote set-url --push origin "$test_dir/missing-fork.git"
 if (
     cd "$clone_dir"
     pr-commit "Keep local commit after push failure" 2>"$test_dir/push-error"
@@ -127,6 +133,7 @@ fi
 [[ "$(git -C "$clone_dir" log -1 --format=%s)" == 'Keep local commit after push failure' ]] || fail "failed push did not preserve the expected commit"
 grep -Fq 'commit created locally but push failed' "$test_dir/push-error" || fail "failed-push recovery was unclear"
 git -C "$clone_dir" remote set-url origin "$origin_url"
+git -C "$clone_dir" remote set-url --push origin "$fork_repo"
 
 git -C "$clone_dir" remote set-head upstream --delete
 printf 'do not stage without upstream HEAD\n' >>"$clone_dir/tracked.txt"
@@ -202,6 +209,14 @@ grep -Fq 'could not determine the origin repository owner' "$test_dir/invalid-or
 git -C "$clone_dir" remote set-url origin "$origin_url"
 
 : >"$fake_gh_log"
+git -C "$clone_dir" config url."git@github.com:".insteadOf gh:
+git -C "$clone_dir" remote set-url origin gh:thelarkbot/project
+git -C "$clone_dir" remote set-url --push origin "$fork_repo"
+git -C "$clone_dir" remote set-url upstream gh:upstream/project
+[[ "$(git -C "$clone_dir" config --get remote.origin.url)" == gh:thelarkbot/project ]] || fail "alias regression setup did not preserve the raw origin URL"
+[[ "$(git -C "$clone_dir" remote get-url origin)" == git@github.com:thelarkbot/project ]] || fail "Git did not resolve the origin URL alias"
+[[ "$(git -C "$clone_dir" remote get-url upstream)" == git@github.com:upstream/project ]] || fail "Git did not resolve the upstream URL alias"
+
 (
     cd "$clone_dir"
     # shellcheck disable=SC2119

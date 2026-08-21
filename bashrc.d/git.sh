@@ -24,11 +24,11 @@ _dev_git_require_gh() {
 
 _dev_git_require_topology() {
     _dev_git_require_repo || return 1
-    git config --get remote.origin.url >/dev/null 2>&1 || {
+    git remote get-url origin >/dev/null 2>&1 || {
         _dev_git_error "missing 'origin' remote (expected personal fork)"
         return 1
     }
-    git config --get remote.upstream.url >/dev/null 2>&1 || {
+    git remote get-url upstream >/dev/null 2>&1 || {
         _dev_git_error "missing 'upstream' remote (expected canonical repository)"
         return 1
     }
@@ -95,6 +95,9 @@ _dev_git_parse_remote() {
             input="${input#*@}"
             host="${input%%/*}"
             path="${input#*/}"
+            if [[ "$host" =~ ^(.+):[0-9]+$ ]]; then
+                host="${BASH_REMATCH[1]}"
+            fi
             ;;
         *@*:*/*)
             input="${input#*@}"
@@ -126,7 +129,7 @@ _dev_git_parse_remote() {
 
 _dev_git_upstream_repo() {
     local remote parsed
-    remote=$(git config --get remote.upstream.url) || return 1
+    remote=$(git remote get-url upstream) || return 1
     parsed=$(_dev_git_parse_remote "$remote") || {
         _dev_git_error "could not determine the upstream repository"
         return 1
@@ -136,7 +139,7 @@ _dev_git_upstream_repo() {
 
 _dev_git_origin_owner() {
     local remote parsed path
-    remote=$(git config --get remote.origin.url) || return 1
+    remote=$(git remote get-url origin) || return 1
     parsed=$(_dev_git_parse_remote "$remote") || {
         _dev_git_error "could not determine the origin repository owner"
         return 1

@@ -92,8 +92,10 @@ The upstream repository and fork owner are derived locally from the configured
 remote URLs. HTTPS (`https://HOST/OWNER/REPOSITORY.git`), SSH URL
 (`ssh://git@HOST/OWNER/REPOSITORY.git`), SCP-style SSH
 (`git@HOST:OWNER/REPOSITORY.git`), and `HOST/OWNER/REPOSITORY` forms are
-supported. GitHub CLI is used only for authentication and `gh pr create`, not to
-round-trip metadata already present in those URLs.
+supported. URL-style remotes may include an explicit numeric port, and Git
+`url.<base>.insteadOf` rewrites are honored before parsing. GitHub CLI is used
+only for authentication and `gh pr create`, not to round-trip metadata already
+present in those URLs.
 
 ## Uninstall
 
