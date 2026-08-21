@@ -93,12 +93,24 @@ directory becomes empty, the installer-owned loader and directory are removed.
 ## Test
 
 ```bash
-shellcheck bashrc.d/git.sh install.sh uninstall.sh test/*.sh
+shellcheck bashrc.d/*.sh install.sh uninstall.sh test/*.sh
 bash test/install_help_test.sh
 bash test/fork_sync_test.sh
 bash test/pr_create_test.sh
+bash test/jenkinsfile_test.sh
 ```
 
 The tests use temporary home directories and local bare Git repositories. They
 do not change the caller's shell configuration, GitHub account, or remote
 repositories.
+
+## Local Jenkins verification
+
+The repository-owned Declarative `Jenkinsfile` runs on an agent labeled
+`linux`. It performs a normal source checkout, runs ShellCheck across the shell
+surface, and executes every `test/*.sh` script. New shell tests are picked up
+without editing the pipeline.
+
+The pipeline requires Bash, Git, and ShellCheck on the agent. It does not need
+developer credentials, a host-home mount, a container-engine socket, or a
+project-specific task runner.
