@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+test_dir=$(mktemp -d)
+trap 'rm -rf "$test_dir"' EXIT
+
+fail() {
+    printf 'FAIL: %s\n' "$*" >&2
+    exit 1
+}
+
+loader_count() {
+    grep -Fc '# dev-tools bashrc.d loader' "$1"
+}
+
+home_with_extension="$test_dir/home-with-extension"
+mkdir -p "$home_with_extension"
+printf 'export EXISTING_SETTING=kept\n' >"$home_with_extension/.bashrc"
+
+HOME="$home_with_extension" "$project_dir/install.sh" >/dev/null
+[[ -f "$home_with_extension/.bashrc.d/dev-tools-git.sh" ]] || fail "helper was not installed"
+[[ "$(loader_count "$home_with_extension/.bashrc")" == 1 ]] || fail "loader was not added exactly once"
+
+HOME="$home_with_extension" "$project_dir/install.sh" >/dev/null
+[[ "$(loader_count "$home_with_extension/.bashrc")" == 1 ]] || fail "reinstall duplicated the loader"
+
+help_output=$(HOME="$home_with_extension" bash -c 'source "$HOME/.bashrc"; pr-help')
+grep -q '^dev-tools commands:$' <<<"$help_output" || fail "help heading is missing"
+grep -q '^  pr-help$' <<<"$help_output" || fail "pr-help is missing from help"
+if grep -q 'fork-sync' <<<"$help_output"; then
+    fail "help advertises a command not included in this slice"
+fi
+
+printf 'export OTHER_EXTENSION=kept\n' >"$home_with_extension/.bashrc.d/other.sh"
+HOME="$home_with_extension" "$project_dir/uninstall.sh" >/dev/null
+[[ ! -e "$home_with_extension/.bashrc.d/dev-tools-git.sh" ]] || fail "helper was not removed"
+[[ -f "$home_with_extension/.bashrc.d/other.sh" ]] || fail "another extension was removed"
+grep -Fq '# dev-tools bashrc.d loader' "$home_with_extension/.bashrc" || fail "shared loader was removed"
+
+empty_home="$test_dir/empty-home"
+mkdir -p "$empty_home"
+printf 'export EXISTING_SETTING=kept\n' >"$empty_home/.bashrc"
+HOME="$empty_home" "$project_dir/install.sh" >/dev/null
+HOME="$empty_home" "$project_dir/uninstall.sh" >/dev/null
+
+[[ ! -e "$empty_home/.bashrc.d" ]] || fail "empty helper directory was not removed"
+if grep -Fq '# dev-tools bashrc.d loader' "$empty_home/.bashrc"; then
+    fail "installer-owned loader was not removed"
+fi
+grep -Fq 'export EXISTING_SETTING=kept' "$empty_home/.bashrc" || fail "existing bashrc content changed"
+
+printf 'install and help tests passed\n'
