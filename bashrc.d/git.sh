@@ -198,11 +198,8 @@ _dev_git_force_push_delay() {
 
 _dev_git_force_push() {
     local delay="$1"
-    printf 'History changed; pushing to origin with --force-with-lease in %s seconds. Press Ctrl-C to cancel.\n' "$delay" >&2
-    if ! sleep "$delay"; then
-        _dev_git_error "history rewritten locally but push cancelled; retry with: git push --force-with-lease --set-upstream origin HEAD"
-        return 130
-    fi
+    printf 'History changed; pushing to origin with --force-with-lease in %s seconds.\nPress Ctrl-C to cancel; the rewritten commit stays local.\nRetry with: git push --force-with-lease --set-upstream origin HEAD\n' "$delay" >&2
+    sleep "$delay" || return 130
     if ! git push --force-with-lease --set-upstream origin HEAD; then
         _dev_git_error "history rewritten locally but push failed; inspect the remote before retrying with: git push --force-with-lease --set-upstream origin HEAD"
         return 1

@@ -152,6 +152,20 @@ if grep -Eq '(^|[[:space:]])--force([[:space:]]|$)' "$fake_git_log"; then
     fail "pr-amend used an unguarded force-push"
 fi
 grep -Fq 'Press Ctrl-C to cancel' "$test_dir/amend-warning" || fail "force-push warning omitted the cancellation window"
+grep -Fq 'Retry with: git push --force-with-lease --set-upstream origin HEAD' "$test_dir/amend-warning" || fail "force-push warning omitted the guarded retry command"
+
+: >"$fake_git_log"
+# shellcheck disable=SC2016 # $1 is expanded by the child shell.
+if timeout --signal=INT --kill-after=1 0.1 bash -c '
+    source "$1"
+    _dev_git_force_push 5
+' _ "$project_dir/bashrc.d/git.sh" 2>"$test_dir/real-interrupt-warning"; then
+    fail "real SIGINT did not interrupt the force-push window"
+fi
+grep -Fq 'Retry with: git push --force-with-lease --set-upstream origin HEAD' "$test_dir/real-interrupt-warning" || fail "real SIGINT hid the guarded retry command"
+if grep -Fq 'push ' "$fake_git_log"; then
+    fail "real SIGINT reached the push step"
+fi
 
 previous_head=$(git -C "$clone_dir" rev-parse HEAD)
 : >"$fake_git_log"
@@ -188,7 +202,7 @@ unset FAKE_SLEEP_INTERRUPT
 if grep -Fq 'push ' "$fake_git_log"; then
     fail "cancelled amend reached the push step"
 fi
-grep -Fq 'history rewritten locally but push cancelled; retry with: git push --force-with-lease --set-upstream origin HEAD' "$test_dir/cancel-warning" || fail "cancelled amend omitted the guarded retry command"
+grep -Fq 'Retry with: git push --force-with-lease --set-upstream origin HEAD' "$test_dir/cancel-warning" || fail "cancelled amend omitted the guarded retry command"
 
 printf 'invalid delay\n' >>"$clone_dir/tracked.txt"
 previous_head=$(git -C "$clone_dir" rev-parse HEAD)

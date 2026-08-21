@@ -92,9 +92,10 @@ default branch and refuses to rewrite history when nothing is staged.
 
 Set `DEV_TOOLS_FORCE_PUSH_DELAY` to a non-negative number to change the pause;
 automated tests use `0`. A lease rejection remains a failure and never falls
-back to an unguarded force-push. Cancelling the delay or receiving a lease
-rejection leaves the rewritten commit local and prints the exact guarded retry
-command. Inspect the remote before retrying after a lease rejection.
+back to an unguarded force-push. The guarded retry command is printed before
+the delay, so it remains visible when Ctrl-C interrupts the shell. A cancelled
+or rejected push leaves the rewritten commit local. Inspect the remote before
+retrying after a lease rejection.
 
 ## Rebase feature work
 
