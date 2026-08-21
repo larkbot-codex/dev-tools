@@ -3,8 +3,8 @@
 Human-focused shell helpers for a fork-based GitHub pull-request workflow.
 
 The public command set is growing through small, reviewable slices. The current
-surface installs the helpers, creates a correctly configured fork checkout, and
-keeps the fork's default branch synchronized with its canonical upstream.
+surface installs the helpers, creates and synchronizes a fork checkout, commits
+feature work, and opens a draft pull request against the canonical upstream.
 
 ## Requirements
 
@@ -52,6 +52,33 @@ It detects the upstream default branch, switches to it when necessary,
 fast-forwards it from `upstream`, and pushes that exact branch to `origin`. It
 never force-pushes.
 
+## Commit feature work
+
+Create or switch to a feature branch, make a focused change, and run:
+
+```bash
+pr-commit "Describe the change"
+```
+
+By default, `pr-commit` stages modifications and deletions to tracked files,
+creates one commit with the supplied message, and pushes the feature branch to
+`origin`. Use `pr-commit --all "Describe the change"` when untracked files are
+intentionally part of the commit. The command refuses to commit on the upstream
+default branch and never force-pushes.
+
+## Open an upstream pull request
+
+From a clean feature branch with at least one commit:
+
+```bash
+pr-create
+```
+
+`pr-create` pushes the current branch and opens a draft pull request from the
+fork to the upstream default branch. Pass a branch name, such as
+`pr-create release`, to choose a different upstream base. The command refuses
+the default branch and refuses to continue when tracked changes are present.
+
 ## Uninstall
 
 ```bash
@@ -69,6 +96,7 @@ directory becomes empty, the installer-owned loader and directory are removed.
 shellcheck bashrc.d/git.sh install.sh uninstall.sh test/*.sh
 bash test/install_help_test.sh
 bash test/fork_sync_test.sh
+bash test/pr_create_test.sh
 ```
 
 The tests use temporary home directories and local bare Git repositories. They

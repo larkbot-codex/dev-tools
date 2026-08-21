@@ -68,6 +68,44 @@ _dev_git_default_branch() {
     printf '%s\n' "$branch"
 }
 
+_dev_git_upstream_repo() {
+    local url
+    url=$(gh repo view "$(git remote get-url upstream)" --json url --jq '.url') || return 1
+    if [[ -z "$url" ]]; then
+        _dev_git_error "could not determine the upstream repository"
+        return 1
+    fi
+    printf '%s\n' "${url#https://}"
+}
+
+_dev_git_origin_owner() {
+    local owner
+    owner=$(gh repo view "$(git remote get-url origin)" --json owner --jq '.owner.login') || return 1
+    if [[ -z "$owner" ]]; then
+        _dev_git_error "could not determine the origin repository owner"
+        return 1
+    fi
+    printf '%s\n' "$owner"
+}
+
+_dev_git_require_feature_branch() {
+    local base branch
+    base=$(_dev_git_default_branch) || return 1
+    branch=$(_dev_git_current_branch) || return 1
+    if [[ "$branch" == "$base" ]]; then
+        _dev_git_error "refusing to use the default branch; create or switch to a feature branch"
+        return 1
+    fi
+}
+
+_dev_git_stage() {
+    if [[ "${1:-}" == "--all" ]]; then
+        git add --all
+    else
+        git add --update
+    fi
+}
+
 pr-help() {
     cat <<'EOF'
 dev-tools commands:
@@ -77,6 +115,12 @@ dev-tools commands:
 
   fork-sync
       Fast-forward the local default branch from upstream and push to origin.
+
+  pr-commit [--all] MESSAGE
+      Commit and push tracked changes. --all includes untracked files.
+
+  pr-create [BASE]
+      Push and open a draft pull request from the fork to upstream.
 
   pr-help
       Show this command reference.
@@ -145,4 +189,45 @@ fork-sync() {
     git fetch upstream "$base" || return 1
     git merge --ff-only "upstream/$base" || return 1
     git push origin "HEAD:$base"
+}
+
+pr-commit() {
+    local stage_mode="--tracked"
+    if [[ "${1:-}" == "--all" ]]; then
+        stage_mode="--all"
+        shift
+    fi
+    if [[ $# -ne 1 ]]; then
+        printf 'usage: pr-commit [--all] MESSAGE\n' >&2
+        return 2
+    fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_gh || return 1
+    _dev_git_require_feature_branch || return 1
+    _dev_git_stage "$stage_mode" || return 1
+    if git diff --cached --quiet; then
+        _dev_git_error "nothing is staged to commit"
+        return 1
+    fi
+    git commit -m "$1" || return 1
+    git push --set-upstream origin HEAD
+}
+
+pr-create() {
+    if [[ $# -gt 1 ]]; then
+        printf 'usage: pr-create [BASE]\n' >&2
+        return 2
+    fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_clean || return 1
+    _dev_git_require_gh || return 1
+    _dev_git_require_feature_branch || return 1
+
+    local base branch repository owner
+    base="${1:-$(_dev_git_default_branch)}" || return 1
+    branch=$(_dev_git_current_branch) || return 1
+    repository=$(_dev_git_upstream_repo) || return 1
+    owner=$(_dev_git_origin_owner) || return 1
+    git push --set-upstream origin HEAD || return 1
+    gh pr create --repo "$repository" --base "$base" --head "$owner:$branch" --fill --draft
 }

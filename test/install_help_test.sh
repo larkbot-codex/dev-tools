@@ -29,8 +29,10 @@ help_output=$(HOME="$home_with_extension" bash -c 'source "$HOME/.bashrc"; pr-he
 grep -q '^dev-tools commands:$' <<<"$help_output" || fail "help heading is missing"
 grep -q 'fork-clone \[HOST/\]OWNER/REPOSITORY' <<<"$help_output" || fail "fork-clone is missing from help"
 grep -q '^  fork-sync$' <<<"$help_output" || fail "fork-sync is missing from help"
+grep -q 'pr-commit \[--all\] MESSAGE' <<<"$help_output" || fail "pr-commit is missing from help"
+grep -q 'pr-create \[BASE\]' <<<"$help_output" || fail "pr-create is missing from help"
 grep -q '^  pr-help$' <<<"$help_output" || fail "pr-help is missing from help"
-if grep -q 'pr-commit' <<<"$help_output"; then
+if grep -q 'pr-amend' <<<"$help_output"; then
     fail "help advertises a command not included in this slice"
 fi
 
