@@ -93,7 +93,7 @@ directory becomes empty, the installer-owned loader and directory are removed.
 ## Test
 
 ```bash
-shellcheck bashrc.d/git.sh install.sh uninstall.sh test/*.sh
+shellcheck bashrc.d/*.sh install.sh uninstall.sh test/*.sh
 bash test/install_help_test.sh
 bash test/fork_sync_test.sh
 bash test/pr_create_test.sh
