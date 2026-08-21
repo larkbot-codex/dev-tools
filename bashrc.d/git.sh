@@ -71,11 +71,21 @@ _dev_git_default_branch() {
 _dev_git_upstream_repo() {
     local url
     url=$(gh repo view "$(git remote get-url upstream)" --json url --jq '.url') || return 1
+    if [[ -z "$url" ]]; then
+        _dev_git_error "could not determine the upstream repository"
+        return 1
+    fi
     printf '%s\n' "${url#https://}"
 }
 
 _dev_git_origin_owner() {
-    gh repo view "$(git remote get-url origin)" --json owner --jq '.owner.login'
+    local owner
+    owner=$(gh repo view "$(git remote get-url origin)" --json owner --jq '.owner.login') || return 1
+    if [[ -z "$owner" ]]; then
+        _dev_git_error "could not determine the origin repository owner"
+        return 1
+    fi
+    printf '%s\n' "$owner"
 }
 
 _dev_git_require_feature_branch() {
@@ -182,25 +192,24 @@ fork-sync() {
 }
 
 pr-commit() {
-    _dev_git_require_topology || return 1
-    _dev_git_require_gh || return 1
-
     local stage_mode="--tracked"
     if [[ "${1:-}" == "--all" ]]; then
         stage_mode="--all"
         shift
     fi
-    if [[ $# -lt 1 ]]; then
+    if [[ $# -ne 1 ]]; then
         printf 'usage: pr-commit [--all] MESSAGE\n' >&2
         return 2
     fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_gh || return 1
     _dev_git_require_feature_branch || return 1
     _dev_git_stage "$stage_mode" || return 1
     if git diff --cached --quiet; then
         _dev_git_error "nothing is staged to commit"
         return 1
     fi
-    git commit -m "$*" || return 1
+    git commit -m "$1" || return 1
     git push --set-upstream origin HEAD
 }
 

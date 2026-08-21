@@ -33,9 +33,13 @@ fi
 
 if [[ "${1:-} ${2:-}" == "repo view" ]]; then
     if [[ "$*" == *"--json url"* ]]; then
-        printf 'https://github.com/upstream/project\n'
+        if [[ "${FAKE_GH_EMPTY_URL:-0}" != 1 ]]; then
+            printf 'https://github.com/upstream/project\n'
+        fi
     elif [[ "$*" == *"--json owner"* ]]; then
-        printf 'thelarkbot\n'
+        if [[ "${FAKE_GH_EMPTY_OWNER:-0}" != 1 ]]; then
+            printf 'thelarkbot\n'
+        fi
     else
         printf 'main\n'
     fi
@@ -70,9 +74,25 @@ git -C "$clone_dir" symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstrea
 export FAKE_GH_LOG="$fake_gh_log"
 export PATH="$fake_bin:$PATH"
 
+if (
+    cd "$test_dir"
+    pr-commit 2>"$test_dir/usage-error"
+); then
+    fail "pr-commit accepted a missing message"
+fi
+grep -Fxq 'usage: pr-commit [--all] MESSAGE' "$test_dir/usage-error" || fail "usage was not reported before repository requirements"
+
 git -C "$clone_dir" switch -c feature/example >/dev/null
 printf 'tracked change\n' >>"$clone_dir/tracked.txt"
 printf 'leave untracked\n' >"$clone_dir/untracked.txt"
+if (
+    cd "$clone_dir"
+    pr-commit "Misplaced option" --all 2>"$test_dir/misplaced-option-error"
+); then
+    fail "pr-commit accepted a misplaced --all option"
+fi
+grep -Fxq 'usage: pr-commit [--all] MESSAGE' "$test_dir/misplaced-option-error" || fail "misplaced --all error was unclear"
+git -C "$clone_dir" diff --cached --quiet || fail "invalid arguments staged changes"
 (
     cd "$clone_dir"
     pr-commit "Update tracked file" >/dev/null
@@ -120,6 +140,28 @@ if (
 fi
 grep -Fq 'tracked changes are present' "$test_dir/dirty-error" || fail "dirty-worktree error was unclear"
 git -C "$clone_dir" restore tracked.txt
+
+export FAKE_GH_EMPTY_URL=1
+if (
+    cd "$clone_dir"
+    # shellcheck disable=SC2119
+    pr-create 2>"$test_dir/empty-url-error"
+); then
+    fail "pr-create accepted an empty upstream repository"
+fi
+grep -Fq 'could not determine the upstream repository' "$test_dir/empty-url-error" || fail "empty upstream error was unclear"
+unset FAKE_GH_EMPTY_URL
+
+export FAKE_GH_EMPTY_OWNER=1
+if (
+    cd "$clone_dir"
+    # shellcheck disable=SC2119
+    pr-create 2>"$test_dir/empty-owner-error"
+); then
+    fail "pr-create accepted an empty origin owner"
+fi
+grep -Fq 'could not determine the origin repository owner' "$test_dir/empty-owner-error" || fail "empty origin-owner error was unclear"
+unset FAKE_GH_EMPTY_OWNER
 
 (
     cd "$clone_dir"
