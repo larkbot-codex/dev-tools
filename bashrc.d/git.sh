@@ -180,6 +180,35 @@ _dev_git_stage() {
     fi
 }
 
+_dev_git_require_branch_name() {
+    if ! git check-ref-format --branch "$1" >/dev/null 2>&1; then
+        _dev_git_error "invalid branch name: $1"
+        return 1
+    fi
+}
+
+_dev_git_force_push_delay() {
+    local delay="${DEV_TOOLS_FORCE_PUSH_DELAY:-3}"
+    if [[ ! "$delay" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        _dev_git_error "DEV_TOOLS_FORCE_PUSH_DELAY must be a non-negative number"
+        return 1
+    fi
+    printf '%s\n' "$delay"
+}
+
+_dev_git_force_push() {
+    local delay="$1"
+    printf 'History changed; pushing to origin with --force-with-lease in %s seconds. Press Ctrl-C to cancel.\n' "$delay" >&2
+    if ! sleep "$delay"; then
+        _dev_git_error "history rewritten locally but push cancelled; retry with: git push --force-with-lease --set-upstream origin HEAD"
+        return 130
+    fi
+    if ! git push --force-with-lease --set-upstream origin HEAD; then
+        _dev_git_error "history rewritten locally but push failed; inspect the remote before retrying with: git push --force-with-lease --set-upstream origin HEAD"
+        return 1
+    fi
+}
+
 pr-help() {
     cat <<'EOF'
 dev-tools commands:
@@ -193,8 +222,17 @@ dev-tools commands:
   pr-commit [--all] MESSAGE
       Commit tracked changes, then try to push. --all includes untracked files.
 
+  pr-amend [--all]
+      Stage changes, amend, pause, then force-push with lease.
+
+  pr-rebase [BASE]
+      Rebase onto an upstream base, pause, then force-push with lease.
+
   pr-create [BASE]
       Push and open a draft pull request from the fork to upstream.
+
+  pr-comment MESSAGE
+      Comment on the current fork branch's single open upstream pull request.
 
   pr-help
       Show this command reference.
@@ -289,6 +327,54 @@ pr-commit() {
     fi
 }
 
+pr-amend() {
+    local stage_mode="--tracked" delay
+    if [[ "${1:-}" == "--all" ]]; then
+        stage_mode="--all"
+        shift
+    fi
+    if [[ $# -ne 0 ]]; then
+        printf 'usage: pr-amend [--all]\n' >&2
+        return 2
+    fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_feature_branch_local || return 1
+    delay=$(_dev_git_force_push_delay) || return 1
+    _dev_git_stage "$stage_mode" || return 1
+    if git diff --cached --quiet; then
+        _dev_git_error "nothing is staged to amend"
+        return 1
+    fi
+    git commit --amend --no-edit || return 1
+    _dev_git_force_push "$delay"
+}
+
+pr-rebase() {
+    if [[ $# -gt 1 ]]; then
+        printf 'usage: pr-rebase [BASE]\n' >&2
+        return 2
+    fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_clean || return 1
+
+    local base current default delay
+    default=$(_dev_git_default_branch) || return 1
+    current=$(_dev_git_current_branch) || return 1
+    if [[ "$current" == "$default" ]]; then
+        _dev_git_error "refusing to rebase the default branch; use fork-sync"
+        return 1
+    fi
+    base="${1:-$default}"
+    _dev_git_require_branch_name "$base" || return 1
+    delay=$(_dev_git_force_push_delay) || return 1
+    git fetch upstream "$base" || return 1
+    git rebase "upstream/$base" || {
+        printf "Resolve conflicts and run 'git rebase --continue', or abort with 'git rebase --abort'.\n" >&2
+        return 1
+    }
+    _dev_git_force_push "$delay"
+}
+
 pr-create() {
     if [[ $# -gt 1 ]]; then
         printf 'usage: pr-create [BASE]\n' >&2
@@ -306,4 +392,31 @@ pr-create() {
     owner=$(_dev_git_origin_owner) || return 1
     git push --set-upstream origin HEAD || return 1
     gh pr create --repo "$repository" --base "$base" --head "$owner:$branch" --fill --draft
+}
+
+pr-comment() {
+    if [[ $# -ne 1 ]]; then
+        printf 'usage: pr-comment MESSAGE\n' >&2
+        return 2
+    fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_gh || return 1
+    _dev_git_require_feature_branch || return 1
+
+    local repository owner branch pr_number
+    repository=$(_dev_git_upstream_repo) || return 1
+    owner=$(_dev_git_origin_owner) || return 1
+    branch=$(_dev_git_current_branch) || return 1
+    pr_number=$(gh pr list --repo "$repository" --head "$branch" --state open \
+        --limit 100 --json number,headRepositoryOwner \
+        --jq ".[] | select((.headRepositoryOwner.login | ascii_downcase) == (\"$owner\" | ascii_downcase)) | .number") || return 1
+    if [[ -z "$pr_number" ]]; then
+        _dev_git_error "no open pull request found for $owner:$branch in $repository"
+        return 1
+    fi
+    if [[ "$pr_number" == *$'\n'* ]]; then
+        _dev_git_error "multiple open pull requests found for $owner:$branch in $repository"
+        return 1
+    fi
+    gh pr comment "$pr_number" --repo "$repository" --body "$1"
 }
