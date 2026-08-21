@@ -24,11 +24,11 @@ _dev_git_require_gh() {
 
 _dev_git_require_topology() {
     _dev_git_require_repo || return 1
-    git remote get-url origin >/dev/null 2>&1 || {
+    git config --get remote.origin.url >/dev/null 2>&1 || {
         _dev_git_error "missing 'origin' remote (expected personal fork)"
         return 1
     }
-    git remote get-url upstream >/dev/null 2>&1 || {
+    git config --get remote.upstream.url >/dev/null 2>&1 || {
         _dev_git_error "missing 'upstream' remote (expected canonical repository)"
         return 1
     }
@@ -52,15 +52,29 @@ _dev_git_current_branch() {
     printf '%s\n' "$branch"
 }
 
-_dev_git_default_branch() {
+_dev_git_default_branch_local() {
     local branch
     branch=$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null) || true
     if [[ -n "$branch" ]]; then
         printf '%s\n' "${branch#upstream/}"
         return 0
     fi
+    return 1
+}
 
-    branch=$(gh repo view "$(git remote get-url upstream)" --json defaultBranchRef --jq '.defaultBranchRef.name') || return 1
+_dev_git_default_branch() {
+    local branch remote_head
+    branch=$(_dev_git_default_branch_local) && {
+        printf '%s\n' "$branch"
+        return 0
+    }
+
+    remote_head=$(git ls-remote --symref upstream HEAD 2>/dev/null) || true
+    branch=$(awk '$1 == "ref:" && $3 == "HEAD" {
+        sub("^refs/heads/", "", $2)
+        print $2
+        exit
+    }' <<<"$remote_head")
     if [[ -z "$branch" ]]; then
         _dev_git_error "could not determine the upstream default branch"
         return 1
@@ -68,34 +82,91 @@ _dev_git_default_branch() {
     printf '%s\n' "$branch"
 }
 
-_dev_git_upstream_repo() {
-    local url
-    url=$(gh repo view "$(git remote get-url upstream)" --json url --jq '.url') || return 1
-    if [[ -z "$url" ]]; then
-        _dev_git_error "could not determine the upstream repository"
+_dev_git_parse_remote() {
+    if [[ $# -ne 1 || -z "$1" ]]; then
+        _dev_git_error "remote URL must identify HOST/OWNER/REPOSITORY"
         return 1
     fi
-    printf '%s\n' "${url#https://}"
+
+    local input="$1" host path owner repository
+    case "$input" in
+        *://*)
+            input="${input#*://}"
+            input="${input#*@}"
+            host="${input%%/*}"
+            path="${input#*/}"
+            ;;
+        *@*:*/*)
+            input="${input#*@}"
+            host="${input%%:*}"
+            path="${input#*:}"
+            ;;
+        */*/*)
+            host="${input%%/*}"
+            path="${input#*/}"
+            ;;
+        *)
+            _dev_git_error "remote URL must identify HOST/OWNER/REPOSITORY"
+            return 1
+            ;;
+    esac
+
+    owner="${path%%/*}"
+    repository="${path#*/}"
+    repository="${repository%.git}"
+    if [[ ! "$host" =~ ^[A-Za-z0-9.-]+$ ||
+        ! "$owner" =~ ^[A-Za-z0-9_.-]+$ ||
+        ! "$repository" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        _dev_git_error "remote URL must identify HOST/OWNER/REPOSITORY"
+        return 1
+    fi
+
+    printf '%s/%s/%s\n' "$host" "$owner" "$repository"
+}
+
+_dev_git_upstream_repo() {
+    local remote parsed
+    remote=$(git config --get remote.upstream.url) || return 1
+    parsed=$(_dev_git_parse_remote "$remote") || {
+        _dev_git_error "could not determine the upstream repository"
+        return 1
+    }
+    printf '%s\n' "$parsed"
 }
 
 _dev_git_origin_owner() {
-    local owner
-    owner=$(gh repo view "$(git remote get-url origin)" --json owner --jq '.owner.login') || return 1
-    if [[ -z "$owner" ]]; then
+    local remote parsed path
+    remote=$(git config --get remote.origin.url) || return 1
+    parsed=$(_dev_git_parse_remote "$remote") || {
         _dev_git_error "could not determine the origin repository owner"
         return 1
-    fi
-    printf '%s\n' "$owner"
+    }
+    path="${parsed#*/}"
+    printf '%s\n' "${path%%/*}"
 }
 
-_dev_git_require_feature_branch() {
-    local base branch
-    base=$(_dev_git_default_branch) || return 1
+_dev_git_require_branch_other_than() {
+    local base="$1" branch
     branch=$(_dev_git_current_branch) || return 1
     if [[ "$branch" == "$base" ]]; then
         _dev_git_error "refusing to use the default branch; create or switch to a feature branch"
         return 1
     fi
+}
+
+_dev_git_require_feature_branch() {
+    local base
+    base=$(_dev_git_default_branch) || return 1
+    _dev_git_require_branch_other_than "$base"
+}
+
+_dev_git_require_feature_branch_local() {
+    local base
+    base=$(_dev_git_default_branch_local) || {
+        _dev_git_error "upstream/HEAD is not set; run: git remote set-head upstream --auto"
+        return 1
+    }
+    _dev_git_require_branch_other_than "$base"
 }
 
 _dev_git_stage() {
@@ -117,7 +188,7 @@ dev-tools commands:
       Fast-forward the local default branch from upstream and push to origin.
 
   pr-commit [--all] MESSAGE
-      Commit and push tracked changes. --all includes untracked files.
+      Commit tracked changes, then try to push. --all includes untracked files.
 
   pr-create [BASE]
       Push and open a draft pull request from the fork to upstream.
@@ -165,7 +236,7 @@ fork-clone() {
         directory="$repository"
     fi
 
-    git -C "$directory" remote get-url upstream >/dev/null 2>&1 || {
+    git -C "$directory" config --get remote.upstream.url >/dev/null 2>&1 || {
         _dev_git_error "the cloned fork has no upstream remote"
         return 1
     }
@@ -178,7 +249,6 @@ fork-clone() {
 fork-sync() {
     _dev_git_require_topology || return 1
     _dev_git_require_clean || return 1
-    _dev_git_require_gh || return 1
 
     local base current
     base=$(_dev_git_default_branch) || return 1
@@ -187,6 +257,7 @@ fork-sync() {
         git switch "$base" || return 1
     fi
     git fetch upstream "$base" || return 1
+    git remote set-head upstream "$base" >/dev/null 2>&1 || true
     git merge --ff-only "upstream/$base" || return 1
     git push origin "HEAD:$base"
 }
@@ -202,15 +273,17 @@ pr-commit() {
         return 2
     fi
     _dev_git_require_topology || return 1
-    _dev_git_require_gh || return 1
-    _dev_git_require_feature_branch || return 1
+    _dev_git_require_feature_branch_local || return 1
     _dev_git_stage "$stage_mode" || return 1
     if git diff --cached --quiet; then
         _dev_git_error "nothing is staged to commit"
         return 1
     fi
     git commit -m "$1" || return 1
-    git push --set-upstream origin HEAD
+    if ! git push --set-upstream origin HEAD; then
+        _dev_git_error "commit created locally but push failed; retry with: git push --set-upstream origin HEAD"
+        return 1
+    fi
 }
 
 pr-create() {

@@ -28,20 +28,8 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_GH_LOG"
 
 if [[ "${1:-} ${2:-}" == "auth status" ]]; then
-    exit 0
-fi
-
-if [[ "${1:-} ${2:-}" == "repo view" ]]; then
-    if [[ "$*" == *"--json url"* ]]; then
-        if [[ "${FAKE_GH_EMPTY_URL:-0}" != 1 ]]; then
-            printf 'https://github.com/upstream/project\n'
-        fi
-    elif [[ "$*" == *"--json owner"* ]]; then
-        if [[ "${FAKE_GH_EMPTY_OWNER:-0}" != 1 ]]; then
-            printf 'thelarkbot\n'
-        fi
-    else
-        printf 'main\n'
+    if [[ "${FAKE_GH_AUTH_FAIL:-0}" == 1 ]]; then
+        exit 1
     fi
     exit 0
 fi
@@ -71,8 +59,24 @@ git -C "$clone_dir" remote add upstream "$upstream_repo"
 git -C "$clone_dir" fetch upstream main >/dev/null 2>&1
 git -C "$clone_dir" symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstream/main
 
+origin_url=https://github.com/thelarkbot/project.git
+upstream_url=git@github.com:upstream/project.git
+git -C "$clone_dir" config "url.${fork_repo}.insteadOf" "$origin_url"
+git -C "$clone_dir" config "url.${upstream_repo}.insteadOf" "$upstream_url"
+git -C "$clone_dir" remote set-url origin "$origin_url"
+git -C "$clone_dir" remote set-url upstream "$upstream_url"
+
 export FAKE_GH_LOG="$fake_gh_log"
 export PATH="$fake_bin:$PATH"
+
+[[ "$(_dev_git_parse_remote 'https://github.com/upstream/project.git')" == github.com/upstream/project ]] || fail "HTTPS remote was not parsed"
+[[ "$(_dev_git_parse_remote 'ssh://git@github.com/upstream/project.git')" == github.com/upstream/project ]] || fail "SSH URL remote was not parsed"
+[[ "$(_dev_git_parse_remote 'git@github.com:upstream/project.git')" == github.com/upstream/project ]] || fail "SCP-style SSH remote was not parsed"
+[[ "$(_dev_git_parse_remote 'github.example.com/upstream/project')" == github.example.com/upstream/project ]] || fail "host selector was not parsed"
+if _dev_git_parse_remote 'https://github.com/upstream/too/many/parts.git' 2>"$test_dir/parser-error"; then
+    fail "invalid remote path was accepted"
+fi
+grep -Fq 'remote URL must identify HOST/OWNER/REPOSITORY' "$test_dir/parser-error" || fail "invalid remote error was unclear"
 
 if (
     cd "$test_dir"
@@ -82,6 +86,8 @@ if (
 fi
 grep -Fxq 'usage: pr-commit [--all] MESSAGE' "$test_dir/usage-error" || fail "usage was not reported before repository requirements"
 
+export FAKE_GH_AUTH_FAIL=1
+: >"$fake_gh_log"
 git -C "$clone_dir" switch -c feature/example >/dev/null
 printf 'tracked change\n' >>"$clone_dir/tracked.txt"
 printf 'leave untracked\n' >"$clone_dir/untracked.txt"
@@ -106,6 +112,38 @@ git -C "$clone_dir" ls-files --error-unmatch untracked.txt >/dev/null 2>&1 && fa
     pr-commit --all "Add untracked file" >/dev/null
 )
 git -C "$clone_dir" ls-files --error-unmatch untracked.txt >/dev/null || fail "--all did not include the untracked file"
+[[ ! -s "$fake_gh_log" ]] || fail "pr-commit invoked GitHub CLI"
+
+previous_head=$(git -C "$clone_dir" rev-parse HEAD)
+printf 'commit before failed push\n' >>"$clone_dir/tracked.txt"
+git -C "$clone_dir" remote set-url origin "$test_dir/missing-fork.git"
+if (
+    cd "$clone_dir"
+    pr-commit "Keep local commit after push failure" 2>"$test_dir/push-error"
+); then
+    fail "pr-commit reported success when push failed"
+fi
+[[ "$(git -C "$clone_dir" rev-parse HEAD)" != "$previous_head" ]] || fail "failed push discarded the local commit"
+[[ "$(git -C "$clone_dir" log -1 --format=%s)" == 'Keep local commit after push failure' ]] || fail "failed push did not preserve the expected commit"
+grep -Fq 'commit created locally but push failed' "$test_dir/push-error" || fail "failed-push recovery was unclear"
+git -C "$clone_dir" remote set-url origin "$origin_url"
+
+git -C "$clone_dir" remote set-head upstream --delete
+printf 'do not stage without upstream HEAD\n' >>"$clone_dir/tracked.txt"
+previous_head=$(git -C "$clone_dir" rev-parse HEAD)
+if (
+    cd "$clone_dir"
+    pr-commit "Cannot verify branch offline" 2>"$test_dir/missing-head-error"
+); then
+    fail "pr-commit accepted a missing upstream/HEAD"
+fi
+[[ "$(git -C "$clone_dir" rev-parse HEAD)" == "$previous_head" ]] || fail "missing upstream/HEAD created a commit"
+git -C "$clone_dir" diff --cached --quiet || fail "missing upstream/HEAD staged changes"
+grep -Fq 'upstream/HEAD is not set' "$test_dir/missing-head-error" || fail "missing upstream/HEAD error was unclear"
+git -C "$clone_dir" restore tracked.txt
+git -C "$clone_dir" symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstream/main
+[[ ! -s "$fake_gh_log" ]] || fail "offline pr-commit checks invoked GitHub CLI"
+unset FAKE_GH_AUTH_FAIL
 
 git -C "$clone_dir" switch main >/dev/null
 printf 'do not commit\n' >>"$clone_dir/tracked.txt"
@@ -141,33 +179,38 @@ fi
 grep -Fq 'tracked changes are present' "$test_dir/dirty-error" || fail "dirty-worktree error was unclear"
 git -C "$clone_dir" restore tracked.txt
 
-export FAKE_GH_EMPTY_URL=1
+git -C "$clone_dir" remote set-url upstream not-a-remote
 if (
     cd "$clone_dir"
     # shellcheck disable=SC2119
-    pr-create 2>"$test_dir/empty-url-error"
+    pr-create 2>"$test_dir/invalid-upstream-error"
 ); then
-    fail "pr-create accepted an empty upstream repository"
+    fail "pr-create accepted an invalid upstream repository"
 fi
-grep -Fq 'could not determine the upstream repository' "$test_dir/empty-url-error" || fail "empty upstream error was unclear"
-unset FAKE_GH_EMPTY_URL
+grep -Fq 'could not determine the upstream repository' "$test_dir/invalid-upstream-error" || fail "invalid upstream error was unclear"
+git -C "$clone_dir" remote set-url upstream "$upstream_url"
 
-export FAKE_GH_EMPTY_OWNER=1
+git -C "$clone_dir" remote set-url origin not-a-remote
 if (
     cd "$clone_dir"
     # shellcheck disable=SC2119
-    pr-create 2>"$test_dir/empty-owner-error"
+    pr-create 2>"$test_dir/invalid-origin-error"
 ); then
-    fail "pr-create accepted an empty origin owner"
+    fail "pr-create accepted an invalid origin owner"
 fi
-grep -Fq 'could not determine the origin repository owner' "$test_dir/empty-owner-error" || fail "empty origin-owner error was unclear"
-unset FAKE_GH_EMPTY_OWNER
+grep -Fq 'could not determine the origin repository owner' "$test_dir/invalid-origin-error" || fail "invalid origin-owner error was unclear"
+git -C "$clone_dir" remote set-url origin "$origin_url"
 
+: >"$fake_gh_log"
 (
     cd "$clone_dir"
     # shellcheck disable=SC2119
     pr-create >/dev/null
 )
 grep -Fq 'pr create --repo github.com/upstream/project --base main --head thelarkbot:feature/example --fill --draft' "$fake_gh_log" || fail "draft upstream pull request was not created correctly"
+grep -Fq 'auth status' "$fake_gh_log" || fail "pr-create did not check GitHub CLI authentication"
+if grep -Fq 'repo view' "$fake_gh_log"; then
+    fail "pr-create used GitHub API calls for local remote metadata"
+fi
 
 printf 'commit and PR creation tests passed\n'

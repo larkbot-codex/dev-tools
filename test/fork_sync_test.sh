@@ -116,6 +116,7 @@ upstream_head=$(git -C "$upstream_work" rev-parse HEAD)
 
 git -C "$clone_dir" switch -c feature/local >/dev/null
 git -C "$clone_dir" remote set-head upstream --delete
+: >"$fake_gh_log"
 (
     cd "$clone_dir"
     fork-sync >/dev/null
@@ -124,7 +125,8 @@ git -C "$clone_dir" remote set-head upstream --delete
 [[ "$(git -C "$clone_dir" branch --show-current)" == main ]] || fail "fork-sync did not switch to main"
 [[ "$(git -C "$clone_dir" rev-parse HEAD)" == "$upstream_head" ]] || fail "local main did not fast-forward"
 [[ "$(git --git-dir="$fork_repo" rev-parse refs/heads/main)" == "$upstream_head" ]] || fail "fork main was not updated"
-grep -Fq 'repo view' "$fake_gh_log" || fail "default-branch fallback was not exercised"
+[[ "$(git -C "$clone_dir" symbolic-ref --short refs/remotes/upstream/HEAD)" == upstream/main ]] || fail "remote default branch was not cached locally"
+[[ ! -s "$fake_gh_log" ]] || fail "fork-sync invoked GitHub CLI"
 
 printf 'dirty\n' >>"$clone_dir/tracked.txt"
 if (
