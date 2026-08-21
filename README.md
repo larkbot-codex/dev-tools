@@ -10,7 +10,8 @@ feature work, and opens a draft pull request against the canonical upstream.
 
 - Bash
 - Git
-- [GitHub CLI](https://cli.github.com/) authenticated to the target host
+- [GitHub CLI](https://cli.github.com/) authenticated to the target host for
+  commands that use the GitHub API (`fork-clone` and `pr-create`)
 - Standard Linux command-line tools (`awk`, `find`, `grep`, and `install`)
 
 ## Install
@@ -50,7 +51,8 @@ fork-sync
 `fork-sync` refuses to run when tracked worktree or index changes are present.
 It detects the upstream default branch, switches to it when necessary,
 fast-forwards it from `upstream`, and pushes that exact branch to `origin`. It
-never force-pushes.
+never force-pushes. When `upstream/HEAD` is not cached, the command asks the
+upstream Git remote for its symbolic `HEAD`; it does not require GitHub CLI.
 
 ## Commit feature work
 
@@ -66,6 +68,13 @@ creates one commit with the supplied message, and pushes the feature branch to
 intentionally part of the commit. The command refuses to commit on the upstream
 default branch and never force-pushes.
 
+Creating the commit does not invoke GitHub CLI or require network access.
+`fork-clone` caches `upstream/HEAD` so the default-branch safety check also works
+offline. If that symbolic ref is missing, `pr-commit` refuses before staging and
+shows the command that restores it. After committing, it attempts a normal Git
+push. If the push fails, the commit remains local and the error includes the
+exact retry command.
+
 ## Open an upstream pull request
 
 From a clean feature branch with at least one commit:
@@ -78,6 +87,15 @@ pr-create
 fork to the upstream default branch. Pass a branch name, such as
 `pr-create release`, to choose a different upstream base. The command refuses
 the default branch and refuses to continue when tracked changes are present.
+
+The upstream repository and fork owner are derived locally from the configured
+remote URLs. HTTPS (`https://HOST/OWNER/REPOSITORY.git`), SSH URL
+(`ssh://git@HOST/OWNER/REPOSITORY.git`), SCP-style SSH
+(`git@HOST:OWNER/REPOSITORY.git`), and `HOST/OWNER/REPOSITORY` forms are
+supported. URL-style remotes may include an explicit numeric port, and Git
+`url.<base>.insteadOf` rewrites are honored before parsing. GitHub CLI is used
+only for authentication and `gh pr create`, not to round-trip metadata already
+present in those URLs.
 
 ## Uninstall
 
