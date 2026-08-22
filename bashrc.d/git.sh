@@ -42,6 +42,14 @@ _dev_git_require_clean() {
     fi
 }
 
+_dev_git_require_identity() {
+    if ! git var GIT_AUTHOR_IDENT >/dev/null 2>&1 ||
+        ! git var GIT_COMMITTER_IDENT >/dev/null 2>&1; then
+        _dev_git_error "Git user identity is not configured; set user.name and user.email before creating or rewriting commits"
+        return 1
+    fi
+}
+
 _dev_git_current_branch() {
     local branch
     branch=$(git branch --show-current) || return 1
@@ -325,6 +333,7 @@ pr-commit() {
     fi
     _dev_git_require_topology || return 1
     _dev_git_require_feature_branch_local || return 1
+    _dev_git_require_identity || return 1
     _dev_git_stage "$stage_mode" || return 1
     if git diff --cached --quiet; then
         _dev_git_error "nothing is staged to commit"
@@ -349,6 +358,7 @@ pr-amend() {
     fi
     _dev_git_require_topology || return 1
     _dev_git_require_feature_branch_local || return 1
+    _dev_git_require_identity || return 1
     delay=$(_dev_git_force_push_delay) || return 1
     _dev_git_stage "$stage_mode" || return 1
     if git diff --cached --quiet; then
@@ -374,6 +384,7 @@ pr-rebase() {
         _dev_git_error "refusing to rebase the default branch; use fork-sync"
         return 1
     fi
+    _dev_git_require_identity || return 1
     base="${1:-$default}"
     _dev_git_require_branch_name "$base" || return 1
     delay=$(_dev_git_force_push_delay) || return 1

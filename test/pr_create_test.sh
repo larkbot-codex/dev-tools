@@ -94,6 +94,25 @@ grep -Fxq 'usage: pr-commit [--all] MESSAGE' "$test_dir/usage-error" || fail "us
 export FAKE_GH_AUTH_FAIL=1
 : >"$fake_gh_log"
 git -C "$clone_dir" switch -c feature/example >/dev/null
+git -C "$clone_dir" config --unset user.name
+git -C "$clone_dir" config --unset user.email
+printf 'identity guard\n' >>"$clone_dir/tracked.txt"
+previous_head=$(git -C "$clone_dir" rev-parse HEAD)
+if (
+    cd "$clone_dir"
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+    pr-commit "Missing identity must fail" 2>"$test_dir/identity-error"
+); then
+    fail "pr-commit accepted a missing Git author identity"
+fi
+[[ "$(git -C "$clone_dir" rev-parse HEAD)" == "$previous_head" ]] || fail "missing identity created a commit"
+git -C "$clone_dir" diff --cached --quiet || fail "missing identity staged changes"
+grep -Fq 'Git user identity is not configured' "$test_dir/identity-error" || fail "missing identity error was unclear"
+git -C "$clone_dir" restore tracked.txt
+git -C "$clone_dir" config user.name Test
+git -C "$clone_dir" config user.email test@example.com
+
 printf 'tracked change\n' >>"$clone_dir/tracked.txt"
 printf 'leave untracked\n' >"$clone_dir/untracked.txt"
 if (
