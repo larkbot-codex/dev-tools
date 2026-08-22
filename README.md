@@ -11,6 +11,8 @@ request against the canonical upstream, and comments on that pull request.
 
 - Bash
 - Git
+- A Git author identity (`user.name` and `user.email`, or equivalent standard
+  Git author environment variables) for commands that create or rewrite commits
 - [GitHub CLI](https://cli.github.com/) authenticated to the target host for
   commands that use the GitHub API (`fork-clone`, `pr-create`, `pr-comment`,
   and `pr-cleanup`)
