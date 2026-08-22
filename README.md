@@ -4,14 +4,15 @@ Human-focused shell helpers for a fork-based GitHub pull-request workflow.
 
 The public command set is growing through small, reviewable slices. The current
 surface installs the helpers, creates and synchronizes a fork checkout, commits
-feature work, and opens a draft pull request against the canonical upstream.
+feature work, performs guarded amend and rebase operations, opens a draft pull
+request against the canonical upstream, and comments on that pull request.
 
 ## Requirements
 
 - Bash
 - Git
 - [GitHub CLI](https://cli.github.com/) authenticated to the target host for
-  commands that use the GitHub API (`fork-clone` and `pr-create`)
+  commands that use the GitHub API (`fork-clone`, `pr-create`, and `pr-comment`)
 - Standard Linux command-line tools (`awk`, `find`, `grep`, and `install`)
 
 ## Install
@@ -75,6 +76,42 @@ shows the command that restores it. After committing, it attempts a normal Git
 push. If the push fails, the commit remains local and the error includes the
 exact retry command.
 
+## Amend feature work
+
+After changing files that belong in the latest feature commit, run:
+
+```bash
+pr-amend
+```
+
+`pr-amend` stages tracked modifications and deletions, amends the current
+commit without changing its message, waits three seconds so the remote rewrite
+can be cancelled, and pushes only with `--force-with-lease`. Use
+`pr-amend --all` to include untracked files. The command refuses the upstream
+default branch and refuses to rewrite history when nothing is staged.
+
+Set `DEV_TOOLS_FORCE_PUSH_DELAY` to a non-negative number to change the pause;
+automated tests use `0`. A lease rejection remains a failure and never falls
+back to an unguarded force-push. The guarded retry command is printed before
+the delay, so it remains visible when Ctrl-C interrupts the shell. A cancelled
+or rejected push leaves the rewritten commit local. Inspect the remote before
+retrying after a lease rejection.
+
+## Rebase feature work
+
+From a clean feature branch, rebase onto the upstream default branch with:
+
+```bash
+pr-rebase
+```
+
+Pass a branch name, such as `pr-rebase release`, to choose another upstream
+base. After a successful rebase, the same cancellation window and
+`--force-with-lease` protection apply. The command refuses to rebase the
+upstream default branch. If conflicts occur, it leaves the rebase in progress
+and prints the exact `git rebase --continue` and `git rebase --abort` recovery
+commands.
+
 ## Open an upstream pull request
 
 From a clean feature branch with at least one commit:
@@ -97,6 +134,20 @@ supported. URL-style remotes may include an explicit numeric port, and Git
 only for authentication and `gh pr create`, not to round-trip metadata already
 present in those URLs.
 
+## Comment on the pull request
+
+From the feature branch associated with an open pull request, run:
+
+```bash
+pr-comment "Ready for another review"
+```
+
+`pr-comment` finds the single open pull request whose head matches the local
+fork owner and current branch, then posts the supplied message. It refuses the
+default branch, derives both repository identities locally from the configured
+remotes, and fails instead of guessing when no matching PR or multiple matching
+PRs are open.
+
 ## Uninstall
 
 ```bash
@@ -115,6 +166,7 @@ shellcheck bashrc.d/*.sh install.sh uninstall.sh test/*.sh
 bash test/install_help_test.sh
 bash test/fork_sync_test.sh
 bash test/pr_create_test.sh
+bash test/rewrite_comment_test.sh
 bash test/jenkinsfile_test.sh
 ```
 
