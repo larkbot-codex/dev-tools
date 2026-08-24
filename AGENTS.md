@@ -39,13 +39,7 @@ configuration. Run every applicable required check whose tooling is available.
 The current complete local surface is:
 
 ```bash
-shellcheck bashrc.d/*.sh install.sh uninstall.sh test/*.sh
-bash test/install_help_test.sh
-bash test/fork_sync_test.sh
-bash test/pr_create_test.sh
-bash test/rewrite_comment_test.sh
-bash test/cleanup_test.sh
-bash test/jenkinsfile_test.sh
+bash scripts/verify.sh
 git diff --check
 ```
 

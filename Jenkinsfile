@@ -13,13 +13,7 @@ pipeline {
       agent { label 'linux' }
       steps {
         checkout scm
-        sh 'shellcheck bashrc.d/*.sh install.sh uninstall.sh test/*.sh'
-        sh '''
-          set -eu
-          for test_script in test/*.sh; do
-            bash "$test_script"
-          done
-        '''
+        sh 'bash scripts/verify.sh'
       }
     }
   }
