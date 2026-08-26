@@ -224,6 +224,249 @@ _dev_git_force_push() {
     fi
 }
 
+_dev_pr_watch_error() {
+    printf 'pr-watch: FATAL: %s\n' "$*" >&2
+}
+
+_dev_pr_watch_report_once() {
+    local state_file="$1" key="$2" output="$3"
+    if grep -Fqx "$key" "$state_file"; then
+        return 1
+    fi
+    printf '%s\n' "$key" >>"$state_file"
+    printf '%s\n' "$output"
+}
+
+pr-watch() (
+    set -euo pipefail
+    export LC_ALL=C
+
+    if [[ $# -ne 0 ]]; then
+        printf 'usage: pr-watch\n' >&2
+        return 2
+    fi
+    _dev_git_require_gh || return 1
+
+    local owner="${PR_WATCH_OWNER:-thelarklan}"
+    local configured_reviewer="${PR_WATCH_REVIEWER:-}"
+    local verbose="${PR_WATCH_VERBOSE:-0}"
+    local max_followups="${PR_WATCH_MAX_FOLLOWUPS:-2}"
+    local authenticated reviewer state_file lock_dir
+    local rows row_count checked=0
+
+    if [[ ! "$owner" =~ ^[A-Za-z0-9-]+$ ]]; then
+        _dev_pr_watch_error "PR_WATCH_OWNER must be a GitHub account name"
+        return 2
+    fi
+    if [[ "$verbose" != "0" && "$verbose" != "1" ]]; then
+        _dev_pr_watch_error "PR_WATCH_VERBOSE must be 0 or 1"
+        return 2
+    fi
+    if [[ ! "$max_followups" =~ ^[0-9]+$ ]]; then
+        _dev_pr_watch_error "PR_WATCH_MAX_FOLLOWUPS must be a non-negative integer"
+        return 2
+    fi
+
+    authenticated=$(gh api user --jq '.login') || {
+        _dev_pr_watch_error "cannot read the authenticated GitHub identity"
+        return 1
+    }
+    reviewer="${configured_reviewer:-$authenticated}"
+    if [[ ! "$reviewer" =~ ^[A-Za-z0-9-]+$ ]]; then
+        _dev_pr_watch_error "PR_WATCH_REVIEWER must be a GitHub login"
+        return 2
+    fi
+    if [[ "${authenticated,,}" != "${reviewer,,}" ]]; then
+        _dev_pr_watch_error "authenticated as $authenticated, expected $reviewer"
+        return 1
+    fi
+
+    state_file="${DEV_TOOLS_PR_WATCH_STATE:-${XDG_CACHE_HOME:-$HOME/.cache}/dev-tools/pr-watch/${reviewer,,}.seen}"
+    mkdir -p -- "$(dirname -- "$state_file")" || {
+        _dev_pr_watch_error "cannot create the state directory"
+        return 1
+    }
+    touch -- "$state_file" || {
+        _dev_pr_watch_error "cannot open state file $state_file"
+        return 1
+    }
+    lock_dir="${state_file}.lock"
+    if ! mkdir -- "$lock_dir" 2>/dev/null; then
+        _dev_pr_watch_error "another watcher is using $state_file"
+        return 1
+    fi
+    trap 'rmdir -- "$lock_dir"' EXIT
+
+    rows=$(gh search prs --owner "$owner" --state open --limit 1000 \
+        --json number,repository,author,isDraft \
+        --jq '.[] | [(.repository.nameWithOwner // ""), (.number | tostring), (.author.login // ""), (.isDraft | tostring)] | @tsv') || {
+        _dev_pr_watch_error "GitHub pull-request search failed"
+        return 1
+    }
+    row_count=$(awk 'NF { count++ } END { print count + 0 }' <<<"$rows")
+    if ((row_count >= 1000)); then
+        _dev_pr_watch_error "pull-request search reached GitHub's 1000-result ceiling"
+        return 1
+    fi
+
+    local row repo number search_author search_draft details head is_draft author
+    local review_rows login commit submitted review_state reviewed="" last_review=""
+    local timeline_rows event_id event_time ready_id="" ready_time=""
+    local repo_owner repo_name thread_rows resolved comments_truncated root_author comment_author
+    local conversation_id="" conversation_time="" conversation_kind=""
+    local command_rows command_id command_time followup_key followup_count escalation_key
+    local graphql_query
+
+    # shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not Bash.
+    graphql_query='query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $endCursor) {
+            nodes {
+              isResolved
+              comments(first: 100) {
+                nodes { databaseId createdAt author { login } }
+                pageInfo { hasNextPage }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }'
+
+    while IFS= read -r row; do
+        [[ -n "$row" ]] || continue
+        IFS=$'\t' read -r repo number search_author search_draft <<<"$row"
+        checked=$((checked + 1))
+
+        if [[ "${search_author,,}" == "${reviewer,,}" || "$search_draft" == "true" ]]; then
+            continue
+        fi
+
+        details=$(gh api "/repos/$repo/pulls/$number" \
+            --jq '[.head.sha, (.draft | tostring), (.user.login // "")] | @tsv') || {
+            _dev_pr_watch_error "cannot read $repo#$number"
+            return 1
+        }
+        IFS=$'\t' read -r head is_draft author <<<"$details"
+        if [[ -z "$head" || -z "$author" ]]; then
+            _dev_pr_watch_error "incomplete pull-request data for $repo#$number"
+            return 1
+        fi
+        if [[ "${author,,}" == "${reviewer,,}" || "$is_draft" == "true" ]]; then
+            continue
+        fi
+
+        review_rows=$(gh api --paginate "/repos/$repo/pulls/$number/reviews?per_page=100" \
+            --jq '.[] | [(.user.login // ""), (.commit_id // ""), (.submitted_at // ""), (.state // "")] | @tsv') || {
+            _dev_pr_watch_error "cannot read reviews for $repo#$number"
+            return 1
+        }
+        reviewed=""
+        last_review=""
+        while IFS=$'\t' read -r login commit submitted review_state; do
+            [[ -n "$login" && -n "$submitted" ]] || continue
+            if [[ "${login,,}" == "${reviewer,,}" && "$review_state" != "DISMISSED" &&
+                ( -z "$last_review" || "$submitted" > "$last_review" ) ]]; then
+                reviewed="$commit"
+                last_review="$submitted"
+            fi
+        done <<<"$review_rows"
+
+        if [[ "$head" != "$reviewed" ]]; then
+            printf '%s#%s\n' "$repo" "$number"
+            continue
+        fi
+        [[ -n "$last_review" ]] || continue
+
+        timeline_rows=$(gh api --paginate -H 'Accept: application/vnd.github+json' \
+            "/repos/$repo/issues/$number/timeline?per_page=100" \
+            --jq '.[] | select(.event == "ready_for_review") | [(.id | tostring), .created_at] | @tsv') || {
+            _dev_pr_watch_error "cannot read timeline for $repo#$number"
+            return 1
+        }
+        ready_id=""
+        ready_time=""
+        while IFS=$'\t' read -r event_id event_time; do
+            [[ -n "$event_id" && -n "$event_time" ]] || continue
+            if [[ "$event_time" > "$last_review" && ( -z "$ready_time" || "$event_time" > "$ready_time" ) ]]; then
+                ready_id="$event_id"
+                ready_time="$event_time"
+            fi
+        done <<<"$timeline_rows"
+        if [[ -n "$ready_id" ]]; then
+            if _dev_pr_watch_report_once "$state_file" \
+                "$repo#$number ready $head $ready_id" "$repo#$number"; then
+                continue
+            fi
+        fi
+
+        repo_owner="${repo%%/*}"
+        repo_name="${repo#*/}"
+        # shellcheck disable=SC2016 # The jq program consumes GraphQL fields literally.
+        thread_rows=$(gh api graphql --paginate \
+            -f query="$graphql_query" -F owner="$repo_owner" -F name="$repo_name" -F number="$number" \
+            --jq '.data.repository.pullRequest.reviewThreads.nodes[] as $thread | $thread.comments.nodes[] | [($thread.isResolved | tostring), ($thread.comments.pageInfo.hasNextPage | tostring), ($thread.comments.nodes[0].author.login // ""), (.databaseId | tostring), .createdAt, (.author.login // "")] | @tsv') || {
+            _dev_pr_watch_error "cannot read review threads for $repo#$number"
+            return 1
+        }
+        conversation_id=""
+        conversation_time=""
+        conversation_kind=""
+        while IFS=$'\t' read -r resolved comments_truncated root_author event_id event_time comment_author; do
+            [[ -n "$event_id" ]] || continue
+            if [[ "$comments_truncated" == "true" ]]; then
+                _dev_pr_watch_error "review thread exceeds 100 comments for $repo#$number"
+                return 1
+            fi
+            if [[ "$resolved" == "false" && "${root_author,,}" == "${reviewer,,}" &&
+                "${comment_author,,}" != "${reviewer,,}" && "$event_time" > "$last_review" &&
+                ( -z "$conversation_time" || "$event_time" > "$conversation_time" ) ]]; then
+                conversation_id="$event_id"
+                conversation_time="$event_time"
+                conversation_kind="thread"
+            fi
+        done <<<"$thread_rows"
+
+        command_rows=$(gh api --paginate \
+            "/repos/$repo/issues/$number/comments?per_page=100&since=$last_review" \
+            --jq ".[] | select(((.user.login // \"\") | ascii_downcase) != (\"$reviewer\" | ascii_downcase) and .created_at > \"$last_review\" and (((.body // \"\") | ascii_downcase) | (contains(\"@${reviewer,,}\") or contains(\"/review ${reviewer,,}\")) and contains(\"review\"))) | [(.id | tostring), .created_at] | @tsv") || {
+            _dev_pr_watch_error "cannot read review commands for $repo#$number"
+            return 1
+        }
+        while IFS=$'\t' read -r command_id command_time; do
+            [[ -n "$command_id" && -n "$command_time" ]] || continue
+            if [[ -z "$conversation_time" || "$command_time" > "$conversation_time" ]]; then
+                conversation_id="$command_id"
+                conversation_time="$command_time"
+                conversation_kind="command"
+            fi
+        done <<<"$command_rows"
+
+        if [[ -n "$conversation_id" ]]; then
+            followup_key="$repo#$number conversation $head $conversation_kind $conversation_id"
+            if grep -Fqx "$followup_key" "$state_file"; then
+                continue
+            fi
+            followup_count=$(grep -Fc "$repo#$number conversation $head " "$state_file" || true)
+            if ((followup_count >= max_followups)); then
+                escalation_key="$repo#$number escalation $head $conversation_kind $conversation_id"
+                if _dev_pr_watch_report_once "$state_file" "$escalation_key" "$repo#$number"; then
+                    printf 'pr-watch: ESCALATE: %s#%s reached %s autonomous follow-up round(s) at %s\n' \
+                        "$repo" "$number" "$max_followups" "$head" >&2
+                fi
+                continue
+            fi
+            _dev_pr_watch_report_once "$state_file" "$followup_key" "$repo#$number" || true
+        fi
+    done <<<"$rows"
+
+    if [[ "$verbose" == "1" ]]; then
+        printf 'pr-watch: checked %s open PR(s)\n' "$checked" >&2
+    fi
+)
+
 pr-help() {
     cat <<'EOF'
 dev-tools commands:
@@ -251,6 +494,9 @@ dev-tools commands:
 
   pr-cleanup [PR]
       Verify a merged pull request, synchronize, and delete its feature branch.
+
+  pr-watch
+      List open pull requests that need review by the authenticated account.
 
   pr-help
       Show this command reference.

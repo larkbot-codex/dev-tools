@@ -35,6 +35,7 @@ grep -q 'pr-rebase \[BASE\]' <<<"$help_output" || fail "pr-rebase is missing fro
 grep -q 'pr-create \[BASE\]' <<<"$help_output" || fail "pr-create is missing from help"
 grep -q 'pr-comment MESSAGE' <<<"$help_output" || fail "pr-comment is missing from help"
 grep -q 'pr-cleanup \[PR\]' <<<"$help_output" || fail "pr-cleanup is missing from help"
+grep -q '^  pr-watch$' <<<"$help_output" || fail "pr-watch is missing from help"
 grep -q '^  pr-help$' <<<"$help_output" || fail "pr-help is missing from help"
 if grep -q 'pr-merge' <<<"$help_output"; then
     fail "help advertises an automated merge command"

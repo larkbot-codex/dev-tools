@@ -5,7 +5,8 @@ Human-focused shell helpers for a fork-based GitHub pull-request workflow.
 The public command set is growing through small, reviewable slices. The current
 surface installs the helpers, creates and synchronizes a fork checkout, commits
 feature work, performs guarded amend and rebase operations, opens a draft pull
-request against the canonical upstream, and comments on that pull request.
+request against the canonical upstream, comments on that pull request, and
+finds open pull requests that need review.
 
 ## Human verification
 
@@ -161,6 +162,56 @@ fork owner and current branch, then posts the supplied message. It refuses the
 default branch, derives both repository identities locally from the configured
 remotes, and fails instead of guessing when no matching PR or multiple matching
 PRs are open.
+
+## Find pull requests that need review
+
+```bash
+pr-watch
+```
+
+`pr-watch` searches the configured GitHub account for open pull requests that
+need attention from the authenticated GitHub CLI identity. It prints one
+`owner/repository#number` per actionable pull request and otherwise prints
+nothing. An empty successful result means there is no work; an API failure,
+identity mismatch, pagination ceiling, or concurrent invocation exits nonzero
+with a fatal diagnostic instead of looking like a quiet poll.
+
+A non-draft pull request authored by someone else is actionable when any of
+these conditions holds:
+
+- the identity's latest submitted review is not at the current head SHA;
+- the pull request became ready after that review;
+- someone replied after the review in an unresolved inline thread opened by
+  that identity; or
+- an issue comment explicitly requests review with `@LOGIN ... review` or
+  `/review LOGIN`.
+
+Ready events and conversation events are deduplicated in a per-reviewer state
+file. Conversation follow-ups are capped at two per head SHA by default. The
+next new event still surfaces the pull request once, but also writes an
+`ESCALATE` diagnostic to stderr so the runner can hand it to a human instead
+of continuing an agent loop. A new head SHA resets that follow-up count.
+
+The authenticated login is the reviewer by default. Set
+`PR_WATCH_REVIEWER` only as a fail-closed identity assertion: it must match
+`gh api user`. Other configuration:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PR_WATCH_OWNER` | `thelarklan` | GitHub user or organization to search. |
+| `PR_WATCH_VERBOSE` | `0` | Set to `1` to print the number of open PRs checked. |
+| `PR_WATCH_MAX_FOLLOWUPS` | `2` | Autonomous conversation rounds allowed per PR head. |
+| `DEV_TOOLS_PR_WATCH_STATE` | Per-reviewer file under the user cache directory | Override the deduplication state path. |
+
+The poller is a reconciliation mechanism, not a model runner. Cron, GitHub
+Actions, Claude, Gemini, Codex, Copilot, or another host can invoke the same
+command and pass each emitted work item into its own review adapter. Provider
+credentials, model selection, prompts, and review submission stay outside this
+helper.
+
+GitHub search exposes at most 1,000 results and the review-thread query reads
+at most 100 comments per thread. Reaching either limit fails loudly rather than
+silently omitting work.
 
 ## Clean up after a merge
 
