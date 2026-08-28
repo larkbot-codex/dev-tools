@@ -51,10 +51,11 @@ pr-help
 ```
 
 The installer copies the helper to `~/.bashrc.d/dev-tools-git.sh`, installs
-`pr-review-quorum` in `~/.local/bin`, creates its lock and log directories, adds
-a marked `.bashrc.d` loader to `~/.bashrc` when needed, and prints the installed
-command reference. Running the installer again is safe and does not duplicate
-the loader.
+`pr-review-cron`, `pr-review-quorum`, and `dev-tools-update` in
+`~/.local/bin`, creates their lock and log directories, adds a marked
+`.bashrc.d` loader to `~/.bashrc` when needed, and prints the installed command
+reference. Installed files are replaced atomically. Running the installer
+again is safe and does not duplicate the loader.
 
 ## Enforce the bot review quorum
 
@@ -236,6 +237,54 @@ command and pass each emitted work item into its own review adapter. Provider
 credentials, model selection, prompts, and review submission stay outside this
 helper.
 
+## Keep installed tools current
+
+`dev-tools-update` maintains a dedicated checkout at
+`~/.local/share/dev-tools/source`, rather than changing a developer worktree.
+It accepts updates only from the configured canonical remote and branch,
+refuses a dirty checkout, detached head, wrong remote, or rewritten history,
+and permits only a fast-forward. It then runs the complete
+`bash scripts/verify.sh` surface and calls `install.sh`; an update is recorded
+in `~/.local/state/dev-tools-update/deployed` only after both succeed. The
+updater shares `~/.cache/pr-review/cron.lock` with the review runners, so an
+install cannot overlap an active review. Logs are written to
+`~/.local/state/dev-tools-update/cron.log`.
+
+Run it once interactively, then copy the hourly example into `crontab -e` if
+automatic deployment is wanted:
+
+```bash
+dev-tools-update
+cron/dev-tools-update.crontab
+```
+
+The updater intentionally does not edit crontab. Existing explicit model and
+effort assignments remain pinned. To make a review job follow the defaults in
+the verified installed runner, remove only its `PR_REVIEW_*_MODEL` and matching
+`PR_REVIEW_*_EFFORT` assignments from the live job. Keep machine-specific
+settings such as `PR_REVIEW_REVIEWER`, `PR_REVIEW_PATH`, provider selection,
+and executable overrides in crontab. For example, removing
+`PR_REVIEW_CLAUDE_MODEL` and `PR_REVIEW_CLAUDE_EFFORT` makes the Claude job use
+the defaults in `pr-review-cron` after each successful update.
+
+Useful updater overrides:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DEV_TOOLS_UPDATE_UPSTREAM` | `https://github.com/thelarklan/dev-tools.git` | Exact canonical fetch URL. |
+| `DEV_TOOLS_UPDATE_BRANCH` | `main` | Canonical deployment branch. |
+| `DEV_TOOLS_UPDATE_SOURCE` | `~/.local/share/dev-tools/source` | Dedicated deployment checkout. |
+| `DEV_TOOLS_UPDATE_LOCK` | `~/.cache/pr-review/cron.lock` | Lock shared with scheduled reviews. |
+| `DEV_TOOLS_UPDATE_LOG` | `~/.local/state/dev-tools-update/cron.log` | Update audit log. |
+| `DEV_TOOLS_UPDATE_DEPLOYED_STATE` | `~/.local/state/dev-tools-update/deployed` | Last successfully installed commit. |
+
+Automatic updates execute code already merged into the canonical deployment
+branch as the local account. Enable the schedule only after that branch's
+protection, required CI, and trusted review gate have been deployed and
+verified as described in the [protected automatic merge
+contract](docs/automatic-merge.md). Passing any example directly to `crontab`
+can replace unrelated jobs; use `crontab -e` to add only the intended line.
+
 ## Run scheduled agent reviews
 
 `./install.sh` also installs `pr-review-cron` in `~/.local/bin`. The runner
@@ -345,8 +394,9 @@ quorum configuration, credentials, logs, and crontab entries for deliberate
 manual removal. If other shell extensions
 remain in `~/.bashrc.d`, their directory and loader are preserved. If the
 directory becomes empty, the installer-owned loader and directory are removed.
-The uninstaller does not alter crontabs or delete review logs and state; remove
-the scheduled line with `crontab -e` before uninstalling it.
+The uninstaller does not alter crontabs or delete review/update logs, state, or
+the dedicated source checkout; remove scheduled lines with `crontab -e` before
+uninstalling them.
 
 ## Git hooks
 

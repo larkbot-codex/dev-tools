@@ -35,7 +35,8 @@ home_dir="$test_dir/home"
 fake_bin="$home_dir/.local/bin"
 mkdir -p "$home_dir/.bashrc.d" "$fake_bin"
 
-for template in "$project_dir"/cron/*.crontab; do
+for provider in codex claude gemini; do
+    template="$project_dir/cron/${provider}.crontab"
     grep -Fq 'PR_REVIEW_REVIEWER=CHANGE_ME' "$template" || \
         fail "$(basename "$template") does not require an explicit reviewer"
     grep -Fq 'PR_REVIEW_PATH=CHANGE_ME' "$template" || \

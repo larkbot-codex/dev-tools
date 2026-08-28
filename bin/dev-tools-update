@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+upstream="${DEV_TOOLS_UPDATE_UPSTREAM:-https://github.com/thelarklan/dev-tools.git}"
+branch="${DEV_TOOLS_UPDATE_BRANCH:-main}"
+source_dir="${DEV_TOOLS_UPDATE_SOURCE:-$HOME/.local/share/dev-tools/source}"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/dev-tools-update"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/pr-review"
+lock_file="${DEV_TOOLS_UPDATE_LOCK:-$cache_dir/cron.lock}"
+log_file="${DEV_TOOLS_UPDATE_LOG:-$state_dir/cron.log}"
+deployed_file="${DEV_TOOLS_UPDATE_DEPLOYED_STATE:-$state_dir/deployed}"
+clone_dir=""
+state_next=""
+
+fail() {
+    printf 'dev-tools-update: %s\n' "$*" >&2
+    exit 1
+}
+
+require_absolute_path() {
+    local name="$1" value="$2"
+    if [[ "$value" != /* || "$value" == "/" ]]; then
+        fail "$name must be an absolute path other than /"
+    fi
+}
+
+cleanup() {
+    if [[ -n "$clone_dir" && -d "$clone_dir" ]]; then
+        rm -rf -- "$clone_dir"
+    fi
+    if [[ -n "$state_next" ]]; then
+        rm -f -- "$state_next"
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+
+[[ -n "$upstream" ]] || fail "DEV_TOOLS_UPDATE_UPSTREAM must not be empty"
+if ! git check-ref-format "refs/heads/$branch" >/dev/null 2>&1; then
+    fail "DEV_TOOLS_UPDATE_BRANCH is not a safe branch name"
+fi
+require_absolute_path DEV_TOOLS_UPDATE_SOURCE "$source_dir"
+require_absolute_path DEV_TOOLS_UPDATE_LOCK "$lock_file"
+require_absolute_path DEV_TOOLS_UPDATE_LOG "$log_file"
+require_absolute_path DEV_TOOLS_UPDATE_DEPLOYED_STATE "$deployed_file"
+
+mkdir -p -- "$(dirname -- "$source_dir")" "$state_dir" "$cache_dir" \
+    "$(dirname -- "$lock_file")" "$(dirname -- "$log_file")" \
+    "$(dirname -- "$deployed_file")"
+touch -- "$log_file"
+exec >>"$log_file" 2>&1
+
+printf '\n[%s] updater started\n' "$(date --iso-8601=seconds)"
+exec {lock_fd}>"$lock_file"
+if ! flock -n "$lock_fd"; then
+    printf '[%s] shared review lock is busy; update skipped\n' \
+        "$(date --iso-8601=seconds)"
+    exit 0
+fi
+
+if [[ ! -e "$source_dir" ]]; then
+    clone_dir=$(mktemp -d "${source_dir}.clone.XXXXXXXX")
+    if ! git clone --origin upstream --branch "$branch" --single-branch \
+        --no-tags -- \
+        "$upstream" "$clone_dir"; then
+        fail "could not clone canonical source"
+    fi
+    mv -T -- "$clone_dir" "$source_dir"
+    clone_dir=""
+elif [[ ! -d "$source_dir" ]]; then
+    fail "source path exists but is not a directory: $source_dir"
+fi
+
+if [[ "$(git -C "$source_dir" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
+    fail "source path is not a Git worktree: $source_dir"
+fi
+
+remote_urls=$(git -C "$source_dir" remote get-url --all upstream 2>/dev/null || true)
+if [[ "$remote_urls" != "$upstream" ]]; then
+    fail "upstream remote must be exactly $upstream"
+fi
+
+current_branch=$(git -C "$source_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+if [[ "$current_branch" != "$branch" ]]; then
+    fail "source checkout must be on $branch, found ${current_branch:-detached HEAD}"
+fi
+if [[ -n "$(git -C "$source_dir" status --porcelain)" ]]; then
+    fail "source checkout has local changes"
+fi
+
+git -C "$source_dir" fetch --no-tags --prune upstream \
+    "+refs/heads/$branch:refs/remotes/upstream/$branch"
+current=$(git -C "$source_dir" rev-parse HEAD)
+candidate=$(git -C "$source_dir" rev-parse "refs/remotes/upstream/$branch^{commit}")
+if ! git -C "$source_dir" merge-base --is-ancestor "$current" "$candidate"; then
+    fail "canonical $branch is not a fast-forward of deployed source $current"
+fi
+if [[ "$current" != "$candidate" ]]; then
+    git -C "$source_dir" merge --ff-only "$candidate"
+fi
+if [[ -n "$(git -C "$source_dir" status --porcelain)" ]]; then
+    fail "source checkout changed during update"
+fi
+
+[[ -f "$source_dir/scripts/verify.sh" ]] || fail "source is missing scripts/verify.sh"
+[[ -f "$source_dir/install.sh" ]] || fail "source is missing install.sh"
+
+(cd -- "$source_dir" && bash scripts/verify.sh)
+bash "$source_dir/install.sh"
+
+state_next=$(mktemp "${deployed_file}.XXXXXXXX")
+printf '%s\n' "$candidate" >"$state_next"
+mv -f -- "$state_next" "$deployed_file"
+state_next=""
+printf '[%s] verified and installed %s\n' "$(date --iso-8601=seconds)" "$candidate"
