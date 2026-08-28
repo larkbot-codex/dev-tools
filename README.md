@@ -5,8 +5,9 @@ Human-focused shell helpers for a fork-based GitHub pull-request workflow.
 The public command set is growing through small, reviewable slices. The current
 surface installs the helpers, creates and synchronizes a fork checkout, commits
 feature work, performs guarded amend and rebase operations, opens a draft pull
-request against the canonical upstream, comments on that pull request, and
-finds open pull requests that need review.
+request against the canonical upstream, comments on that pull request, finds
+open pull requests that need review, and runs a least-privilege GitHub App check
+for an exact-head three-bot review quorum.
 
 ## Human verification
 
@@ -29,6 +30,7 @@ review record.
 - ShellCheck for repository verification and the optional Git hooks
 - Standard Linux command-line tools (`awk`, `find`, `flock`, `grep`, `install`,
   and `tar`)
+- `curl`, `jq`, and OpenSSL for the optional GitHub App quorum evaluator
 
 ## Install
 
@@ -38,10 +40,24 @@ source ~/.bashrc
 pr-help
 ```
 
-The installer copies the helper to `~/.bashrc.d/dev-tools-git.sh`, adds a
-marked `.bashrc.d` loader to `~/.bashrc` when needed, and prints the installed
+The installer copies the helper to `~/.bashrc.d/dev-tools-git.sh`, installs
+`pr-review-quorum` in `~/.local/bin`, creates its lock and log directories, adds
+a marked `.bashrc.d` loader to `~/.bashrc` when needed, and prints the installed
 command reference. Running the installer again is safe and does not duplicate
 the loader.
+
+## Enforce the bot review quorum
+
+The optional `pr-review-quorum` command authenticates as the dedicated
+least-privilege GitHub App, polls its installation repositories, and publishes
+the required `bot-review-quorum` check. It pins immutable account IDs and passes
+only when a cohort bot authored the pull request and the other two cohort bots
+approved its exact current head. The repository owner and all other accounts
+are excluded from the quorum.
+
+Credential setup, scheduling, audit output, the personal-repository safety
+constraint, and the required ruleset are documented in the [bot review quorum
+runbook](docs/review-quorum.md).
 
 ## Clone a fork
 
@@ -312,7 +328,9 @@ commit, and identical local and published feature tips have been verified.
 source ~/.bashrc
 ```
 
-The uninstaller removes only the dev-tools helper. If other shell extensions
+The uninstaller removes the dev-tools helper and quorum evaluator. It preserves
+quorum configuration, credentials, logs, and crontab entries for deliberate
+manual removal. If other shell extensions
 remain in `~/.bashrc.d`, their directory and loader are preserved. If the
 directory becomes empty, the installer-owned loader and directory are removed.
 The uninstaller does not alter crontabs or delete review logs and state; remove

@@ -5,6 +5,7 @@ target_dir="${HOME}/.bashrc.d"
 target_file="${target_dir}/dev-tools-git.sh"
 cron_runner="${HOME}/.local/bin/pr-review-cron"
 bashrc_file="${HOME}/.bashrc"
+quorum_file="${HOME}/.local/bin/pr-review-quorum"
 
 if [[ -f "$target_file" ]]; then
     rm -- "$target_file"
@@ -18,6 +19,13 @@ if [[ -f "$cron_runner" ]]; then
     printf 'Removed %s\n' "$cron_runner"
 else
     printf 'Already absent: %s\n' "$cron_runner"
+fi
+
+if [[ -f "$quorum_file" ]]; then
+    rm -- "$quorum_file"
+    printf 'Removed %s\n' "$quorum_file"
+else
+    printf 'Already absent: %s\n' "$quorum_file"
 fi
 
 # Preserve the shared loader whenever another shell extension still uses it.
@@ -37,4 +45,4 @@ if [[ -d "$target_dir" ]] && ! find "$target_dir" -mindepth 1 -print -quit | gre
     fi
 fi
 
-printf 'dev-tools Git helpers uninstalled\n'
+printf 'dev-tools Git and quorum helpers uninstalled\n'

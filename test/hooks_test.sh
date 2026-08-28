@@ -24,6 +24,11 @@ example() {
     printf 'example\n'
 }
 EOF
+cat >"$repo/bin/example" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'example executable\n'
+EOF
 cat >"$repo/install.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
