@@ -54,15 +54,19 @@ make_app_jwt() {
 github_request() {
     local method="$1" path="$2" token="$3" body="${4:-}"
     local -a args
-    args=(-fsS --retry 2 --retry-delay 1 -X "$method"
+    args=(-fsS -X "$method"
         -H 'Accept: application/vnd.github+json'
         -H 'X-GitHub-Api-Version: 2022-11-28'
-        -H "Authorization: Bearer $token"
+        -H @-
         -H 'User-Agent: thelarklan-bot-review-quorum')
+    if [[ "$method" == GET || "$method" == PATCH ]]; then
+        args+=(--retry 2 --retry-delay 1)
+    fi
     if [[ -n "$body" ]]; then
         args+=(-H 'Content-Type: application/json' --data-binary "$body")
     fi
-    "$curl_bin" "${args[@]}" "$api_url$path"
+    printf 'Authorization: Bearer %s\n' "$token" |
+        "$curl_bin" "${args[@]}" "$api_url$path"
 }
 
 collect_pages() {
@@ -114,10 +118,12 @@ evaluate_quorum() {
             | ($latest[($id | tostring)] // {
                 user_id: $id, login: "unknown", state: "MISSING", commit_id: "", submitted_at: ""
               })
-            | . + {exact_head: (.state == "APPROVED" and .commit_id == $head)}
+            | . + {exact_head: ($head != "" and .state == "APPROVED" and .commit_id == $head)}
           )) as $observed
         | ($observed | map(select(.exact_head)) | length) as $approval_count
-        | if ($pr.state // "" | ascii_downcase) != "open" then
+        | if $head == "" then
+            {conclusion:"failure", title:"Pull request head is missing", summary:"The quorum gate cannot validate approvals without a non-empty pull-request head SHA."}
+          elif ($pr.state // "" | ascii_downcase) != "open" then
             {conclusion:"failure", title:"Pull request is not open", summary:"The quorum gate only passes open pull requests."}
           elif ($pr.draft // false) then
             {conclusion:"failure", title:"Pull request is a draft", summary:"Mark the pull request ready before quorum can pass."}
@@ -142,14 +148,15 @@ evaluate_quorum() {
 
 publish_check() {
     local repository="$1" pull_number="$2" pull_url="$3" evaluation="$4"
-    local head conclusion title summary existing existing_id existing_conclusion existing_summary body response check_id
+    local head conclusion title summary encoded_check_name existing existing_id existing_conclusion existing_summary body response check_id
     head=$(jq -er '.head_sha' <<<"$evaluation") || return 1
     conclusion=$(jq -er '.conclusion' <<<"$evaluation") || return 1
     title=$(jq -er '.title' <<<"$evaluation") || return 1
     summary=$(jq -er '.summary' <<<"$evaluation") || return 1
+    encoded_check_name=$(printf '%s' "$check_name" | jq -sRr @uri) || return 1
 
     existing=$(github_request GET \
-        "/repos/$repository/commits/$head/check-runs?check_name=$check_name&filter=latest" \
+        "/repos/$repository/commits/$head/check-runs?check_name=$encoded_check_name&filter=latest" \
         "$installation_token") || existing='{"check_runs":[]}'
     existing_id=$(jq -r --argjson app "$QUORUM_APP_ID" \
         '[.check_runs[] | select(.app.id == $app)] | first | .id // empty' <<<"$existing")

@@ -99,6 +99,18 @@ write_reviews "[$claude_review,$gemini_approval]"
 write_pull "$bot_codex" false release
 [[ "$(conclusion)" == failure ]] || fail 'pull request to another base passed'
 
+write_pull "$bot_codex"
+jq 'del(.head.sha)' "$pull_file" >"$test_dir/missing-head.json"
+mv "$test_dir/missing-head.json" "$pull_file"
+empty_claude_review=$(review "$bot_claude" larkbot-claude APPROVED '' 1)
+empty_gemini_review=$(review "$bot_gemini" larkbot-gemini APPROVED '' 2)
+write_reviews "[$empty_claude_review,$empty_gemini_review]"
+missing_head_evaluation=$(evaluate_quorum "$pull_file" "$reviews_file" main "$bots" "$owner")
+[[ "$(jq -r '.conclusion' <<<"$missing_head_evaluation")" == failure ]] || \
+    fail 'missing head and empty review commit IDs passed the quorum gate'
+[[ "$(jq -r '[.observed[].exact_head] | any' <<<"$missing_head_evaluation")" == false ]] || \
+    fail 'empty review commit ID was marked as an exact-head approval'
+
 fake_bin="$test_dir/fake-bin"
 mkdir -p "$fake_bin"
 cat >"$fake_bin/curl" <<EOF
@@ -106,7 +118,16 @@ cat >"$fake_bin/curl" <<EOF
 set -euo pipefail
 method=''
 previous=''
+authorization=\$(cat)
+[[ "\$authorization" == "Authorization: Bearer "* ]] || {
+    printf 'fake curl did not receive authorization on stdin\n' >&2
+    exit 1
+}
 for argument in "\$@"; do
+    if [[ "\$argument" == *'Authorization: Bearer '* || "\$argument" == installation-token ]]; then
+        printf 'authorization token leaked into fake curl argv\n' >&2
+        exit 1
+    fi
     if [[ "\$previous" == -X ]]; then
         method="\$argument"
     fi

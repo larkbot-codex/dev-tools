@@ -54,8 +54,9 @@ The immutable account-ID mapping is:
 
 Do not put the private key, installation token, environment file, or a copy of
 the private key in Git. The evaluator refuses a key readable by group or other
-users. It obtains a short-lived installation token for every poll and does not
-write that token to disk or logs.
+users. It obtains a short-lived installation token for every poll, streams the
+authorization header to curl over standard input so the token is absent from
+process arguments, and does not write that token to disk or logs.
 
 Run one foreground audit before scheduling:
 
