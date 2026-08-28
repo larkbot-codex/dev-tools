@@ -186,7 +186,7 @@ run_provider() {
             timeout --signal=TERM --kill-after=2m "${PR_REVIEW_TIMEOUT:-45m}" \
                 "$executable" --print --permission-mode bypassPermissions \
                 --no-session-persistence --output-format text \
-                --model "${PR_REVIEW_CLAUDE_MODEL:-claude-opus-5}" \
+                --model "${PR_REVIEW_CLAUDE_MODEL:-claude-sonnet-5}" \
                 --effort "${PR_REVIEW_CLAUDE_EFFORT:-high}" "$prompt"
             ;;
         gemini)

@@ -43,7 +43,7 @@ for template in "$project_dir"/cron/*.crontab; do
 done
 grep -Fq 'PR_REVIEW_CODEX_MODEL=gpt-5.6-sol PR_REVIEW_CODEX_EFFORT=high' \
     "$project_dir/cron/codex.crontab" || fail "Codex crontab does not pin its model"
-grep -Fq 'PR_REVIEW_CLAUDE_MODEL=claude-opus-5 PR_REVIEW_CLAUDE_EFFORT=high' \
+grep -Fq 'PR_REVIEW_CLAUDE_MODEL=claude-sonnet-5 PR_REVIEW_CLAUDE_EFFORT=high' \
     "$project_dir/cron/claude.crontab" || fail "Claude crontab does not pin its model"
 grep -Fq 'PR_REVIEW_ANTIGRAVITY_MODEL=gemini-3.7-flash-high PR_REVIEW_ANTIGRAVITY_EFFORT=high' \
     "$project_dir/cron/gemini.crontab" || fail "Antigravity crontab does not pin its model"
@@ -154,7 +154,7 @@ PR_WATCH_ITEM=owner/claude#8 \
 REVIEW_SUBMITTED="$review_marker" \
 PROVIDER_ARGS="$provider_args" \
     "$project_dir/bin/pr-review-cron"
-assert_arg_pair "$provider_args" --model claude-opus-5 "Claude model was not pinned"
+assert_arg_pair "$provider_args" --model claude-sonnet-5 "Claude model was not pinned"
 assert_arg_pair "$provider_args" --effort high "Claude effort was not pinned"
 
 cat >"$fake_bin/agy" <<'EOF'
