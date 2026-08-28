@@ -14,6 +14,11 @@ home_dir="$test_dir/home"
 fake_bin="$home_dir/.local/bin"
 mkdir -p "$home_dir/.bashrc.d" "$fake_bin"
 
+for template in "$project_dir"/cron/*.crontab; do
+    grep -Fq 'PR_REVIEW_REVIEWER=CHANGE_ME' "$template" || \
+        fail "$(basename "$template") does not require an explicit reviewer"
+done
+
 cat >"$home_dir/.bashrc.d/dev-tools-git.sh" <<'EOF'
 pr-watch() {
     printf '%s conversation head thread 42\n' "$PR_WATCH_ITEM" >>"$DEV_TOOLS_PR_WATCH_STATE"
@@ -26,7 +31,7 @@ cat >"$fake_bin/gh" <<'EOF'
 set -euo pipefail
 if [[ "$1" == "api" && "$2" == "user" ]]; then
     printf 'review-bot\n'
-elif [[ "$1" == "api" && "$2" == */reviews* ]]; then
+elif [[ "$1" == "api" && ( "$2" == */reviews* || "${3:-}" == */reviews* ) ]]; then
     if [[ -e "$REVIEW_SUBMITTED" ]]; then
         printf '102\thead-sha\n'
     else

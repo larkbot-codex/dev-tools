@@ -21,6 +21,7 @@ printf 'export EXISTING_SETTING=kept\n' >"$home_with_extension/.bashrc"
 HOME="$home_with_extension" "$project_dir/install.sh" >/dev/null
 [[ -f "$home_with_extension/.bashrc.d/dev-tools-git.sh" ]] || fail "helper was not installed"
 [[ -x "$home_with_extension/.local/bin/pr-review-cron" ]] || fail "cron runner was not installed"
+[[ -d "$home_with_extension/.cache/pr-review" ]] || fail "cron lock directory was not created"
 [[ "$(loader_count "$home_with_extension/.bashrc")" == 1 ]] || fail "loader was not added exactly once"
 
 HOME="$home_with_extension" "$project_dir/install.sh" >/dev/null

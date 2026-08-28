@@ -227,6 +227,7 @@ cron/claude.crontab
 cron/gemini.crontab
 ```
 
+Replace `CHANGE_ME` with that WSL account's exact authenticated GitHub login.
 Each example polls every five minutes and uses `flock` to prevent overlapping
 runs. Passing an example directly to `crontab` replaces that account's entire
 existing crontab, so do that only when replacement is intended. The Gemini
@@ -294,6 +295,8 @@ source ~/.bashrc
 The uninstaller removes only the dev-tools helper. If other shell extensions
 remain in `~/.bashrc.d`, their directory and loader are preserved. If the
 directory becomes empty, the installer-owned loader and directory are removed.
+The uninstaller does not alter crontabs or delete review logs and state; remove
+the scheduled line with `crontab -e` before uninstalling it.
 
 ## Git hooks
 
