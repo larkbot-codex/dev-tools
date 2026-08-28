@@ -3,6 +3,9 @@
 These instructions govern automated changes in this repository. They are
 limited to the Git and pull-request lifecycle; use the repository's existing
 documentation, tests, and code as the authority for implementation behavior.
+The repository adopts the shared review standard through
+`docs/review-policy.md`; that local policy records repository-specific
+verification, protected paths, and exceptions.
 
 ## Start from a safe repository state
 
@@ -40,6 +43,7 @@ The current complete local surface is:
 
 ```bash
 bash scripts/verify.sh
+bash scripts/verify-pr-diff.sh upstream/main HEAD
 git diff --check
 ```
 

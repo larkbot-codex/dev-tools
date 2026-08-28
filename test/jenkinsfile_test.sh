@@ -14,6 +14,11 @@ grep -Fq 'agent none' "$jenkinsfile" || fail "pipeline should not reserve an age
 grep -Fq "agent { label 'linux' }" "$jenkinsfile" || fail "Validate stage does not target a linux agent"
 grep -Fq 'checkout scm' "$jenkinsfile" || fail "source checkout is missing"
 grep -Eq "sh ['\"]bash scripts/verify[.]sh['\"]" "$jenkinsfile" || fail "pipeline does not use the repository verification script"
+# shellcheck disable=SC2016 # Jenkins expands the literal environment reference.
+grep -Fq 'refs/pull/$CHANGE_ID/head' "$jenkinsfile" || fail "pipeline does not fetch the exact pull-request head"
+grep -Fq 'bash scripts/verify-pr-diff.sh' "$jenkinsfile" || fail "pipeline does not verify the pull-request diff"
+# shellcheck disable=SC2016 # Jenkins expands the literal environment reference.
+grep -Fq 'refs/remotes/origin/$CHANGE_TARGET' "$jenkinsfile" || fail "pipeline does not compare against the requested base branch"
 
 verification_script="$project_dir/scripts/verify.sh"
 shellcheck_step=$(grep -E '^shellcheck ' "$verification_script" || true)

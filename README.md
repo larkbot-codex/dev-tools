@@ -28,6 +28,10 @@ maintainer path. GitHub, not an agent or repository helper, performs an eligible
 automatic merge. See the [protected automatic merge
 contract](docs/automatic-merge.md).
 
+The reusable review contract is owned by `thelarklan/thelarklan`; this
+repository's [adoption policy](docs/review-policy.md) records only the local
+approval profile, protected paths, verification, cleanup, and exceptions.
+
 ## Requirements
 
 - Bash
@@ -165,7 +169,9 @@ pr-create
 `pr-create` pushes the current branch and opens a draft pull request from the
 fork to the upstream default branch. Pass a branch name, such as
 `pr-create release`, to choose a different upstream base. The command refuses
-the default branch and refuses to continue when tracked changes are present.
+the default branch and refuses to continue when tracked changes are present. If
+the repository contains `.github/pull_request_template.md`, `pr-create` uses it
+as the body while continuing to derive the title from commit information.
 
 The upstream repository and fork owner are derived locally from the configured
 remote URLs. HTTPS (`https://HOST/OWNER/REPOSITORY.git`), SSH URL
@@ -376,12 +382,24 @@ The tests use temporary home directories and local bare Git repositories. They
 do not change the caller's shell configuration, GitHub account, or remote
 repositories.
 
+Verify the final pull-request diff separately against its upstream base:
+
+```bash
+bash scripts/verify-pr-diff.sh upstream/main HEAD
+```
+
+The verifier resolves both revisions, computes their merge base, and runs
+Git's whitespace validation across the complete final change rather than the
+clean worktree surrounding an already-created commit.
+
 ## Local Jenkins verification
 
 The repository-owned Declarative `Jenkinsfile` runs on an agent labeled
 `linux`. It performs a normal source checkout, runs ShellCheck across the shell
-surface, and executes every `test/*.sh` script. New shell tests are picked up
-without editing the pipeline.
+surface, and executes every `test/*.sh` script. For a pull-request build it also
+fetches the exact source head and target branch, then validates the complete
+merge-base-to-head diff. New shell tests are picked up without editing the
+pipeline.
 
 The pipeline requires Bash, Git, and ShellCheck on the agent. It does not need
 developer credentials, a host-home mount, a container-engine socket, or a

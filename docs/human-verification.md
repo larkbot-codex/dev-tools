@@ -6,6 +6,8 @@ or review so it remains attached to the exact head commit that was verified.
 An eligible three-agent pull request may instead use the
 [protected automatic merge contract](automatic-merge.md) after its trusted
 check and ruleset have been deployed and verified.
+The shared requirements and this repository's implementation are recorded in
+the [local review policy](review-policy.md).
 
 ## Contributor record
 

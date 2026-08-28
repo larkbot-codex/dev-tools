@@ -1,2 +1,21 @@
-# The repository maintainer and automation accounts review all changes.
+# Routine changes use the peer-agent review profile from docs/review-policy.md.
 * @thelarklan @larkbot-codex @larkbot-gemini @larkbot-claude
+
+# Review policy and enforcement require the human owner. Last match wins.
+/.github/CODEOWNERS             @thelarklan
+/.github/pull_request_template.md @thelarklan
+/.github/workflows/             @thelarklan
+/AGENTS.md                      @thelarklan
+/Jenkinsfile                    @thelarklan
+/docs/automatic-merge.md        @thelarklan
+/docs/human-verification.md     @thelarklan
+/docs/review-policy.md          @thelarklan
+/.githooks/                     @thelarklan
+/install-hooks.sh               @thelarklan
+/scripts/verify.sh              @thelarklan
+/scripts/verify-pr-diff.sh      @thelarklan
+/test/hooks_test.sh             @thelarklan
+/test/jenkinsfile_test.sh       @thelarklan
+/test/verify_pr_diff_test.sh    @thelarklan
+/bin/pr-review-cron             @thelarklan
+/cron/                          @thelarklan

@@ -3,6 +3,9 @@
 Automatic merge is safe only when GitHub, rather than a repository helper or
 review agent, performs the merge after a fail-closed identity and revision
 gate. Enabling repository auto-merge by itself is not sufficient.
+This is the `dev-tools` implementation of the `peer-agents` approval profile
+declared in the [local review policy](review-policy.md); shared review intent
+remains in the versioned `thelarklan/thelarklan` standard.
 
 ## Three-agent quorum
 
