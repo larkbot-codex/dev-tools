@@ -23,7 +23,8 @@ resolution, current base, native reviews, and human code-owner approval for
 protected paths. The App classifies the complete changed-file list against a
 private per-repository exact-path and directory-prefix map. A protected change
 also requires the configured human owner's exact-head approval; a routine bot
-change fails if the owner occupies an approval slot.
+change publishes failure and remains disarmed if any owner approval exists,
+until that approval is dismissed.
 
 ## Trusted App boundary
 
@@ -93,7 +94,11 @@ Start with `QUORUM_AUTO_MERGE=0`. Verify the expected App ID, installed
 repositories, account IDs, complete pagination, exact-head success and failure
 checks, and the live ruleset. Accept the App pull-request write permission,
 enable repository auto-merge, then set `QUORUM_AUTO_MERGE=1` and run one
-foreground reconciliation before scheduling the one-minute locked poll.
+foreground reconciliation before scheduling the one-minute locked poll. Under
+exactly metadata read, pull-request read/write, and checks read/write, confirm
+that `enablePullRequestAutoMerge` succeeds and GitHub attributes and performs
+the resulting squash merge; also confirm the App has neither contents-write nor
+direct-merge capability.
 
 Audit output records repository, PR number, head SHA, author ID, required and
 observed reviewer IDs and states, check-run ID, and auto-merge action without

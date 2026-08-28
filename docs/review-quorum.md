@@ -95,6 +95,8 @@ map aligned with the base branch's protected `CODEOWNERS` rules. The per-repo
 then change `dev-tools` to `true` only when its v2 pilot is ready. A protected
 PR requires an exact-head approval from the configured owner ID in addition to
 the two agent reviews. A routine bot PR fails if the owner approves it.
+That failure disables any armed auto-merge request and remains until the owner
+approval is dismissed.
 
 Then enforce its mode:
 

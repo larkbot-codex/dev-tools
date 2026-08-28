@@ -178,6 +178,8 @@ case "\$method \$url" in
     *'/repos/thelarklan/example/pulls/7/reviews?per_page=100&page=1')
         if [[ "\${FAKE_APPROVALS:-complete}" == complete ]]; then
             printf '%s\n' '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:01Z"},{"id":2,"user":{"id":320627233,"login":"larkbot-gemini"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:02Z"}]'
+        elif [[ "\${FAKE_APPROVALS:-complete}" == owner ]]; then
+            printf '%s\n' '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:01Z"},{"id":2,"user":{"id":320627233,"login":"larkbot-gemini"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:02Z"},{"id":3,"user":{"id":166922787,"login":"thelarklan"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:03Z"}]'
         else
             printf '%s\n' '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:01Z"}]'
         fi
@@ -255,6 +257,13 @@ integration_output=$(FAKE_APPROVALS=missing GRAPHQL_LOG="$graphql_log" \
     fail 'lost exact-head quorum did not disarm auto-merge'
 grep -Fq 'disablePullRequestAutoMerge' "$graphql_log" || \
     fail 'lost exact-head quorum did not use the disable mutation'
+
+integration_output=$(FAKE_APPROVALS=owner GRAPHQL_LOG="$graphql_log" \
+    QUORUM_CONFIG_FILE="$config_file" "$project_dir/bin/pr-review-quorum")
+[[ "$(jq -r '.conclusion' <<<"$integration_output")" == failure ]] || \
+    fail 'routine bot change with owner approval did not publish failure'
+[[ "$(jq -r '.auto_merge_action' <<<"$integration_output")" == disarmed ]] || \
+    fail 'routine bot change with owner approval did not disarm auto-merge'
 
 if FAKE_GRAPHQL_ERROR=1 GRAPHQL_LOG="$graphql_log" \
     QUORUM_CONFIG_FILE="$config_file" "$project_dir/bin/pr-review-quorum" \

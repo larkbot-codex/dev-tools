@@ -42,7 +42,11 @@ declared complete, the owner must enable code-owner review, add Jenkins as a
 required status check after confirming the context is published reliably,
 grant the trusted App pull-request write permission without contents or
 administration access, install the private protected-path map, and enable v2
-reconciliation after a safe gate test.
+reconciliation after a safe gate test. The live acceptance must prove that
+`enablePullRequestAutoMerge` succeeds with exactly metadata read, pull-request
+read/write, and checks read/write; that GitHub attributes and performs the
+resulting squash merge; and that the App has no contents-write or direct-merge
+capability.
 
 ## Verification
 
@@ -111,9 +115,10 @@ feature branch.
   atomic operation.
 - Compensating control: the App uses stable account IDs and a private
   protected-path map, requires exact-head human approval for protected changes,
-  rejects human approval on routine bot changes, re-reads complete decisive
-  reviews and the head before arming auto-merge, disarms it when quorum is
-  lost, runs at most once per minute, and has no contents-write,
+  publishes failure and disables auto-merge when human approval exists on a
+  routine bot change until that approval is dismissed, re-reads complete
+  decisive reviews and the head before arming auto-merge, disarms it when
+  quorum is lost, runs at most once per minute, and has no contents-write,
   administration, or direct-merge permission. No outside write collaborator is
   added without protected review.
 - Owner: `@thelarklan`.
