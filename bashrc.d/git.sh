@@ -280,6 +280,10 @@ pr-watch() (
         _dev_pr_watch_error "authenticated as $authenticated, expected $reviewer"
         return 1
     fi
+    if ! command -v flock >/dev/null 2>&1; then
+        _dev_pr_watch_error "flock is not installed"
+        return 1
+    fi
 
     state_file="${DEV_TOOLS_PR_WATCH_STATE:-${XDG_CACHE_HOME:-$HOME/.cache}/dev-tools/pr-watch/${reviewer,,}.seen}"
     mkdir -p -- "$(dirname -- "$state_file")" || {

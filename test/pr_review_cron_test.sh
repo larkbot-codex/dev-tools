@@ -38,6 +38,8 @@ mkdir -p "$home_dir/.bashrc.d" "$fake_bin"
 for template in "$project_dir"/cron/*.crontab; do
     grep -Fq 'PR_REVIEW_REVIEWER=CHANGE_ME' "$template" || \
         fail "$(basename "$template") does not require an explicit reviewer"
+    grep -Fq 'PR_REVIEW_PATH=CHANGE_ME' "$template" || \
+        fail "$(basename "$template") does not require an explicit provider PATH"
 done
 grep -Fq 'PR_REVIEW_CODEX_MODEL=gpt-5.6-sol PR_REVIEW_CODEX_EFFORT=high' \
     "$project_dir/cron/codex.crontab" || fail "Codex crontab does not pin its model"
@@ -67,6 +69,10 @@ elif [[ "$1" == "api" && ( "$2" == */reviews* || "${3:-}" == */reviews* ) ]]; th
         printf '101\thead-sha\n'
     fi
 elif [[ "$1" == "pr" && "$2" == "view" ]]; then
+    if [[ -n "${PRE_PROVIDER_FAIL_NUMBER:-}" && "${3:-}" == "$PRE_PROVIDER_FAIL_NUMBER" ]]; then
+        printf 'simulated pre-provider head failure\n' >&2
+        exit 8
+    fi
     if [[ -n "${HEAD_CALLS:-}" ]]; then
         head_calls=0
         [[ ! -e "$HEAD_CALLS" ]] || read -r head_calls <"$HEAD_CALLS"
@@ -96,6 +102,11 @@ chmod +x "$toolchain_bin/test-shell"
 cat >"$fake_bin/codex" <<'EOF'
 #!/usr/bin/env test-shell
 set -euo pipefail
+if [[ -n "${PROVIDER_CALLS:-}" ]]; then
+    call_count=0
+    [[ ! -e "$PROVIDER_CALLS" ]] || read -r call_count <"$PROVIDER_CALLS"
+    printf '%s\n' "$((call_count + 1))" >"$PROVIDER_CALLS"
+fi
 printf '%s\n' "$@" >"$PROVIDER_ARGS"
 touch "$REVIEW_SUBMITTED"
 printf 'submitted test review\n'
@@ -105,8 +116,9 @@ chmod +x "$fake_bin/codex"
 review_marker="$test_dir/review-submitted"
 provider_args="$test_dir/provider-args"
 HOME="$home_dir" \
-PATH="$fake_bin:$toolchain_bin:/usr/local/bin:/usr/bin:/bin" \
+PATH="$fake_bin:/usr/local/bin:/usr/bin:/bin" \
 PR_REVIEW_PROVIDER=codex \
+PR_REVIEW_PATH="$fake_bin:$toolchain_bin:/usr/local/bin:/usr/bin:/bin" \
 PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
 PR_REVIEW_TIMEOUT=5s \
 PR_WATCH_ITEM=owner/repository#7 \
@@ -170,6 +182,31 @@ assert_arg_pair "$provider_args" --model gemini-3.7-flash-high \
 assert_arg_pair "$provider_args" --effort high "Antigravity effort was not pinned"
 
 rm -- "$review_marker"
+batch_calls="$test_dir/batch-provider-calls"
+batch_items=$'owner/first#10\nowner/fail#11\nowner/third#12'
+if HOME="$home_dir" \
+    PATH="$fake_bin:$toolchain_bin:/usr/local/bin:/usr/bin:/bin" \
+    PR_REVIEW_PROVIDER=codex \
+    PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
+    PR_REVIEW_TIMEOUT=5s \
+    PR_WATCH_ITEM="$batch_items" \
+    PR_WATCH_RECORD_STATE=0 \
+    PRE_PROVIDER_FAIL_NUMBER=11 \
+    REVIEW_SUBMITTED="$review_marker" \
+    PROVIDER_ARGS="$provider_args" \
+    PROVIDER_CALLS="$batch_calls" \
+        "$project_dir/bin/pr-review-cron"; then
+    fail "batch with a failed preparation query succeeded"
+fi
+[[ "$(cat "$batch_calls")" == "2" ]] || \
+    fail "a preparation query failure truncated the remaining work batch"
+grep -Fq 'preparation query failed for owner/fail#11' \
+    "$home_dir/.local/state/pr-review/cron.log" || \
+    fail "pre-provider query failure did not name the skipped item"
+grep -Fq 'reviewing owner/third#12' "$home_dir/.local/state/pr-review/cron.log" || \
+    fail "work after a preparation query failure was not attempted"
+
+rm -- "$review_marker"
 head_calls="$test_dir/head-calls"
 if HOME="$home_dir" \
     PATH="$fake_bin:$toolchain_bin:/usr/local/bin:/usr/bin:/bin" \
@@ -228,8 +265,19 @@ PROVIDER_CALLS="$failure_calls" \
 [[ "$(cat "$failure_calls")" == "2" ]] || fail "provider retries were not bounded"
 grep -Fq 'ESCALATE: owner/another#8 failed 2 consecutive attempt(s)' \
     "$home_dir/.local/state/pr-review/cron.log" || fail "provider failures did not escalate"
+grep -Fq 'owner/another#8 at head-sha remains paused after 2 unconfirmed attempt(s)' \
+    "$home_dir/.local/state/pr-review/cron.log" || fail "paused item was not named in the log"
 if grep -Fq 'owner/another#8 ' "$home_dir/.local/state/pr-review/pr-watch.seen"; then
     fail "failed primary provider state was committed"
+fi
+if grep -Eq 'owner/(confirmation#10|third#12) ' \
+    "$home_dir/.local/state/pr-review/provider-failures"; then
+    fail "inactive provider failure state was not pruned"
+fi
+
+if HOME="$home_dir" PR_REVIEW_PROVIDER=codex PR_REVIEW_PATH=CHANGE_ME \
+    "$project_dir/bin/pr-review-cron" 2>/dev/null; then
+    fail "provider PATH placeholder was accepted"
 fi
 
 if HOME="$home_dir" PR_REVIEW_PROVIDER=unknown "$project_dir/bin/pr-review-cron" 2>/dev/null; then

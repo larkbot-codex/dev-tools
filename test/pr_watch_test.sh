@@ -12,7 +12,7 @@ fail() {
 
 mkdir -p "$test_dir/bin"
 cat >"$test_dir/bin/gh" <<'EOF'
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
@@ -105,7 +105,7 @@ run_watch() {
         GH_EVENT_ID="${GH_EVENT_ID:-}" \
         GH_EVENT_TIME="${GH_EVENT_TIME:-}" \
         DEV_TOOLS_PR_WATCH_STATE="$state_file" \
-        "$@" bash -c 'source "$1"; pr-watch' _ "$project_dir/bashrc.d/git.sh" \
+        "$@" /bin/bash -c 'source "$1"; pr-watch' _ "$project_dir/bashrc.d/git.sh" \
         >"$test_dir/stdout" 2>"$test_dir/stderr"
     watch_status=$?
     set -e
@@ -118,6 +118,20 @@ run_watch new-head "$test_dir/new-head.state"
 touch "$test_dir/persistent-lock.state.lock"
 run_watch new-head "$test_dir/persistent-lock.state"
 [[ "$watch_status" -eq 0 ]] || fail "an unlocked lock file wedged the watcher"
+
+held_state="$test_dir/held-lock.state"
+exec {held_lock_fd}>"${held_state}.lock"
+flock -n "$held_lock_fd" || fail "could not hold the watcher test lock"
+run_watch new-head "$held_state"
+[[ "$watch_status" -ne 0 ]] || fail "a concurrent watcher was accepted"
+grep -Fq 'another watcher is using' "$test_dir/stderr" || \
+    fail "concurrent watcher failure was not explained"
+exec {held_lock_fd}>&-
+
+run_watch quiet "$test_dir/missing-flock.state" PATH="$test_dir/bin"
+[[ "$watch_status" -ne 0 ]] || fail "watcher without flock succeeded"
+grep -Fq 'flock is not installed' "$test_dir/stderr" || \
+    fail "missing flock was reported as a lock collision"
 
 run_watch dismissed "$test_dir/dismissed.state"
 [[ "$watch_status" -eq 0 ]] || fail "dismissed-review watch failed"

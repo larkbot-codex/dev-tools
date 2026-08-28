@@ -27,8 +27,8 @@ review record.
   commands that use the GitHub API (`fork-clone`, `pr-create`, `pr-comment`,
   and `pr-cleanup`)
 - ShellCheck for repository verification and the optional Git hooks
-- Standard Linux command-line tools (`awk`, `find`, `grep`, `install`, and
-  `tar`)
+- Standard Linux command-line tools (`awk`, `find`, `flock`, `grep`, `install`,
+  and `tar`)
 
 ## Install
 
@@ -215,12 +215,13 @@ helper.
 calls `pr-watch`, gives each work item to Codex, Claude, Gemini CLI, or
 Antigravity, and accepts the result only after GitHub reports a new review at
 the current head. Watcher state is committed only after that confirmation, so
-a failed provider run is retried up to three times per pull-request head. A
-third consecutive failure is recorded in
-`~/.local/state/pr-review/provider-failures`, logged as `ESCALATE`, and paused
-until the head changes or the matching failure-state line is removed. Events
-marked `ESCALATE` by the watcher are recorded and left for a human instead of
-starting another autonomous review round.
+a failed provider run is retried up to three times per pull-request head. Each
+unconfirmed attempt is recorded in
+`~/.local/state/pr-review/provider-failures`; reaching the limit logs
+`ESCALATE` and pauses the item until the head changes or the matching
+failure-state line is removed. Failure entries for items no longer emitted by
+the watcher are pruned. Events marked `ESCALATE` by the watcher are recorded
+and left for a human instead of starting another autonomous review round.
 
 Open `crontab -e` in the matching WSL account and copy the environment and job
 lines from one staggered example:
@@ -231,10 +232,15 @@ cron/claude.crontab
 cron/gemini.crontab
 ```
 
-Replace `CHANGE_ME` with that WSL account's exact authenticated GitHub login.
-Each example polls every five minutes and uses `flock` to prevent overlapping
-runs. The examples pin Codex to GPT-5.6 Sol with high reasoning, Claude to
-Claude Opus 5 with high effort, and Antigravity to Gemini 3.7 Flash High.
+Replace `PR_REVIEW_REVIEWER=CHANGE_ME` with that WSL account's exact
+authenticated GitHub login. Replace `PR_REVIEW_PATH=CHANGE_ME` with the
+colon-separated `PATH` from the account's authenticated provider shell so
+Node, Python, and repository toolchains remain available under cron; use
+absolute directories because crontab environment assignments do not expand
+`$HOME`. Each example polls every five minutes and uses `flock` to prevent
+overlapping runs. The examples pin Codex to GPT-5.6 Sol with high reasoning,
+Claude to Claude Opus 5 with high effort, and Antigravity to Gemini 3.7 Flash
+High.
 Passing an example directly to `crontab` replaces that account's entire
 existing crontab, so do that only when replacement is intended. The Gemini
 example selects Antigravity's `agy` command; remove

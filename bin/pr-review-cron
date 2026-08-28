@@ -16,7 +16,12 @@ if [[ ! "$max_failures" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-export PATH="$HOME/.local/bin:${PR_REVIEW_PATH:-$PATH}"
+review_path="${PR_REVIEW_PATH:-$PATH}"
+if [[ "$review_path" == "CHANGE_ME" ]]; then
+    printf 'pr-review-cron: replace PR_REVIEW_PATH=CHANGE_ME with the provider toolchain PATH\n' >&2
+    exit 2
+fi
+export PATH="$HOME/.local/bin:$review_path"
 export LC_ALL=C
 
 helper="${DEV_TOOLS_HELPER:-$HOME/.bashrc.d/dev-tools-git.sh}"
@@ -122,6 +127,21 @@ clear_failures() {
     mv -f -- "$failure_next" "$failure_file"
 }
 
+prune_inactive_failures() {
+    awk '
+        NR == FNR { if (NF) active[$1] = 1; next }
+        $1 in active
+    ' "$work_file" "$failure_file" >"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+}
+
+prune_other_heads() {
+    local item="$1" head="$2"
+    awk -v item="$item" -v head="$head" \
+        '!($1 == item && $2 != head)' "$failure_file" >"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+}
+
 latest_review() {
     local repo="$1" number="$2"
     gh api --paginate "/repos/$repo/pulls/$number/reviews?per_page=100" \
@@ -202,6 +222,8 @@ run_provider() {
     esac
 }
 
+prune_inactive_failures
+
 processed=0
 failed=0
 paused=0
@@ -221,13 +243,26 @@ while IFS= read -r item; do
 
     repo="${item%#*}"
     number="${item##*#}"
+    set +e
     current_head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq '.headRefOid')
+    current_head_status=$?
+    before_review=$(latest_review "$repo" "$number")
+    before_review_status=$?
+    set -e
+    if ((current_head_status != 0 || before_review_status != 0)); then
+        failed=$((failed + 1))
+        printf 'pr-review-cron: preparation query failed for %s (head-status=%s, review-status=%s); provider not started\n' \
+            "$item" "$current_head_status" "$before_review_status"
+        continue
+    fi
+    prune_other_heads "$item" "$current_head"
     attempt_count=$(failure_count "$item" "$current_head")
     if ((attempt_count >= max_failures)); then
         paused=$((paused + 1))
+        printf '[%s] %s at %s remains paused after %s unconfirmed attempt(s)\n' \
+            "$(date --iso-8601=seconds)" "$item" "$current_head" "$attempt_count"
         continue
     fi
-    before_review=$(latest_review "$repo" "$number")
     before_review_id="${before_review%%$'\t'*}"
     prompt="$(printf '%s\n' \
         "This is an autonomous scheduled pull-request review for $item, running as GitHub identity $reviewer." \

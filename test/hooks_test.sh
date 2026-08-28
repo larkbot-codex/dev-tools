@@ -12,7 +12,7 @@ fail() {
 }
 
 repo="$test_dir/repo"
-mkdir -p "$repo/.githooks" "$repo/bashrc.d" "$repo/scripts" "$repo/test"
+mkdir -p "$repo/.githooks" "$repo/bashrc.d" "$repo/bin" "$repo/scripts" "$repo/test"
 cp "$project_dir/.githooks/pre-commit" "$repo/.githooks/pre-commit"
 cp "$project_dir/.githooks/pre-push" "$repo/.githooks/pre-push"
 cp "$project_dir/scripts/verify.sh" "$repo/scripts/verify.sh"
@@ -29,6 +29,7 @@ cat >"$repo/install.sh" <<'EOF'
 set -euo pipefail
 EOF
 cp "$repo/install.sh" "$repo/uninstall.sh"
+cp "$repo/install.sh" "$repo/bin/example"
 cat >"$repo/test/example_test.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
