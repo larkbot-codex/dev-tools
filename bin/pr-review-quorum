@@ -59,7 +59,7 @@ github_request() {
         -H 'X-GitHub-Api-Version: 2022-11-28'
         -H @-
         -H 'User-Agent: thelarklan-bot-review-quorum')
-    if [[ "$method" == GET || "$method" == PATCH ]]; then
+    if [[ "$method" == GET ]]; then
         args+=(--retry 2 --retry-delay 1)
     fi
     if [[ -n "$body" ]]; then
@@ -237,7 +237,7 @@ validate_configuration() {
 }
 
 main() {
-    local bot_ids_json jwt token_response repositories failures=0
+    local bot_ids_json jwt token_response installation_token repositories failures=0
     local repository full_name default_branch owner_id pulls pull_number pull_file reviews_file reviews evaluation fresh_pull fresh_head pull_url
 
     bot_ids_json=$(validate_configuration) || return 1
@@ -253,8 +253,6 @@ main() {
         quorum_error 'GitHub did not return an installation access token'
         return 1
     }
-    export installation_token
-
     repositories=$(collect_pages '/installation/repositories' '.repositories') || {
         quorum_error 'could not list installation repositories'
         return 1

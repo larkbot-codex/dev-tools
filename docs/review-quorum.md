@@ -71,6 +71,10 @@ credential. Copy `cron/pr-review-quorum` into `crontab -e` only after the audit
 succeeds. Run exactly one evaluator instance; the template uses `flock` and
 polls once per minute.
 
+The append-only audit log is not rotated automatically. Configure `logrotate`
+or equivalent retention for `~/.local/state/pr-review-quorum/cron.log` based on
+the repository's pull-request volume and required audit window.
+
 ## Personal-repository ruleset
 
 The App installation does not create rulesets. For each default branch, create
