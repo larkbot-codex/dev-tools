@@ -6,8 +6,8 @@ The public command set is growing through small, reviewable slices. The current
 surface installs the helpers, creates and synchronizes a fork checkout, commits
 feature work, performs guarded amend and rebase operations, opens a draft pull
 request against the canonical upstream, comments on that pull request, finds
-open pull requests that need review, and runs a least-privilege GitHub App check
-for an exact-head three-bot review quorum.
+open pull requests that need review, and runs a hardened GitHub App gate that
+pins an exact-head three-bot review quorum and reconciles GitHub auto-merge.
 
 ## Merge verification
 
@@ -16,17 +16,16 @@ Before merging, record the exact manual steps, expected and observed results,
 cleanup instructions, known limitations, and behavior deliberately deferred to
 a later change.
 
-Until the protected gate is deployed and verified, use a deliberate maintainer
-merge and the [human verification checklist](docs/human-verification.md) as a
-reusable review record. A protected automatic merge is safe when a trusted,
-least-privilege check proves that the pull request was authored by one member
-of a configured three-agent cohort and the other two members approved the exact
-current head, while an organization ruleset synchronously requires two
-approvals from that cohort's dedicated team and all CI for that revision. A
-user-owned repository cannot enforce the team-scoped quorum and must retain the
-maintainer path. GitHub, not an agent or repository helper, performs an eligible
-automatic merge. See the [protected automatic merge
-contract](docs/automatic-merge.md).
+Until the protected gate is deployed and verified, use the [human verification
+checklist](docs/human-verification.md) as the reusable review record and leave
+auto-merge unarmed. Under the v2 gate, the trusted App proves that the rotating
+two configured non-author agents approved the exact current head, publishes the
+required check, and enables or disables squash auto-merge. The personal
+repository ruleset continues to enforce native approvals, code-owner approval
+for protected paths, CI, current-base, and conversation rules. Routine changes
+need no human action; protected changes need human content approval but no
+separate merge click. GitHub, not the App or a review agent, performs the merge.
+See the [protected automatic merge contract](docs/automatic-merge.md).
 
 The reusable review contract is owned by `thelarklan/thelarklan`; this
 repository's [adoption policy](docs/review-policy.md) records only the local
@@ -63,8 +62,9 @@ the loader.
 ## Enforce the bot review quorum
 
 The optional `pr-review-quorum` command authenticates as the dedicated
-least-privilege GitHub App, polls its installation repositories, and publishes
-the required `bot-review-quorum` check. It pins immutable account IDs. A
+least-privilege GitHub App, polls its installation repositories, publishes the
+required `bot-review-quorum` check, and reconciles squash auto-merge. It pins
+immutable account IDs. A
 bot-authored pull request needs exact-head approvals from the other two cohort
 bots; an owner-authored pull request needs exact-head approvals from any two
 cohort bots. The repository owner's approval and all outside accounts are
@@ -312,11 +312,11 @@ silently omitting work.
 
 ## Clean up after a merge
 
-Merging occurs as a deliberate maintainer action until the documented protected
-automatic merge gate is deployed and verified. Dev-tools intentionally does
-not provide a `pr-merge` command; the protected path uses GitHub auto-merge
-after every required rule and trusted check passes. After GitHub reports the
-pull request merged, stay on its feature branch and run:
+Leave auto-merge unarmed until the documented personal-repository gate is
+deployed and verified. Dev-tools intentionally does not provide a `pr-merge`
+command; the trusted App only arms GitHub squash auto-merge after the rotating
+agent quorum passes, and GitHub waits for every other repository rule. After
+GitHub reports the pull request merged, stay on its feature branch and run:
 
 ```bash
 pr-cleanup

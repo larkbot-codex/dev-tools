@@ -1,4 +1,4 @@
-<!-- Managed from thelarklan/thelarklan at review-standard-v1. -->
+<!-- Managed from thelarklan/thelarklan at review-standard-v2. -->
 <!-- Keep every section. Use "Not applicable" with a reason when needed. -->
 
 ## Summary
@@ -8,6 +8,7 @@
 ## Scope and risk
 
 - Approval profile: <!-- peer-agents or human -->
+- Classification: <!-- routine or protected -->
 - Protected or high-risk paths: <!-- none, or list them -->
 - Primary failure modes:
 - Security, compatibility, or destructive-operation concerns:
@@ -34,6 +35,11 @@
 
 <!-- Temporary resources, test state, and post-merge branch cleanup. -->
 
+## Merge automation
+
+- Trusted quorum check: <!-- pending, passed at HEAD, or not applicable -->
+- Auto-merge: <!-- not armed, armed for squash, or not eligible -->
+
 ## Limitations and deferred behavior
 
 - Known limitations:
@@ -52,3 +58,4 @@ None.
 - [ ] Verification was run at the recorded head revision.
 - [ ] No credentials, tokens, private keys, host-home contents, or machine-specific state were added.
 - [ ] New commits will be followed by refreshed evidence and review.
+- [ ] Auto-merge will be armed only through the trusted personal-repository gate.
