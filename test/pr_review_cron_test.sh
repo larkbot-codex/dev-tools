@@ -5,9 +5,30 @@ project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 
+# Scheduled providers export their own PR_REVIEW_* settings. None of those
+# ambient values should change this test's fake identities, models, or drivers.
+unset PR_REVIEW_PROVIDER PR_REVIEW_OWNER PR_REVIEW_REVIEWER \
+    PR_REVIEW_MAX_FOLLOWUPS PR_REVIEW_MAX_FAILURES PR_REVIEW_TIMEOUT \
+    PR_REVIEW_WORK_ROOT PR_REVIEW_PATH PR_REVIEW_GEMINI_DRIVER \
+    PR_REVIEW_CODEX_MODEL PR_REVIEW_CODEX_EFFORT PR_REVIEW_CLAUDE_MODEL \
+    PR_REVIEW_CLAUDE_EFFORT PR_REVIEW_ANTIGRAVITY_MODEL \
+    PR_REVIEW_ANTIGRAVITY_EFFORT PR_REVIEW_CODEX_BIN PR_REVIEW_CLAUDE_BIN \
+    PR_REVIEW_GEMINI_BIN PR_WATCH_OWNER PR_WATCH_REVIEWER \
+    PR_WATCH_MAX_FOLLOWUPS PR_WATCH_VERBOSE DEV_TOOLS_HELPER \
+    XDG_STATE_HOME XDG_CACHE_HOME
+
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
+}
+
+assert_arg_pair() {
+    local args_file="$1" flag="$2" value="$3" message="$4"
+    awk -v flag="$flag" -v value="$value" '
+        previous == flag && $0 == value { found = 1 }
+        { previous = $0 }
+        END { exit !found }
+    ' "$args_file" || fail "$message"
 }
 
 home_dir="$test_dir/home"
@@ -27,7 +48,9 @@ grep -Fq 'PR_REVIEW_ANTIGRAVITY_MODEL=gemini-3.7-flash-high PR_REVIEW_ANTIGRAVIT
 
 cat >"$home_dir/.bashrc.d/dev-tools-git.sh" <<'EOF'
 pr-watch() {
-    printf '%s conversation head thread 42\n' "$PR_WATCH_ITEM" >>"$DEV_TOOLS_PR_WATCH_STATE"
+    if [[ "${PR_WATCH_RECORD_STATE:-1}" == "1" ]]; then
+        printf '%s conversation head thread 42\n' "$PR_WATCH_ITEM" >>"$DEV_TOOLS_PR_WATCH_STATE"
+    fi
     printf '%s\n' "$PR_WATCH_ITEM"
 }
 EOF
@@ -44,6 +67,16 @@ elif [[ "$1" == "api" && ( "$2" == */reviews* || "${3:-}" == */reviews* ) ]]; th
         printf '101\thead-sha\n'
     fi
 elif [[ "$1" == "pr" && "$2" == "view" ]]; then
+    if [[ -n "${HEAD_CALLS:-}" ]]; then
+        head_calls=0
+        [[ ! -e "$HEAD_CALLS" ]] || read -r head_calls <"$HEAD_CALLS"
+        head_calls=$((head_calls + 1))
+        printf '%s\n' "$head_calls" >"$HEAD_CALLS"
+        if [[ "${POST_CONFIRM_FAIL:-0}" == "1" && "$head_calls" -gt 1 ]]; then
+            printf 'simulated post-provider head failure\n' >&2
+            exit 9
+        fi
+    fi
     printf 'head-sha\n'
 else
     printf 'unexpected gh call: %s\n' "$*" >&2
@@ -52,8 +85,16 @@ fi
 EOF
 chmod +x "$fake_bin/gh"
 
-cat >"$fake_bin/codex" <<'EOF'
+toolchain_bin="$test_dir/toolchain/bin"
+mkdir -p "$toolchain_bin"
+cat >"$toolchain_bin/test-shell" <<'EOF'
 #!/usr/bin/env bash
+exec /usr/bin/bash "$@"
+EOF
+chmod +x "$toolchain_bin/test-shell"
+
+cat >"$fake_bin/codex" <<'EOF'
+#!/usr/bin/env test-shell
 set -euo pipefail
 printf '%s\n' "$@" >"$PROVIDER_ARGS"
 touch "$REVIEW_SUBMITTED"
@@ -64,7 +105,7 @@ chmod +x "$fake_bin/codex"
 review_marker="$test_dir/review-submitted"
 provider_args="$test_dir/provider-args"
 HOME="$home_dir" \
-PATH="$fake_bin:/usr/local/bin:/usr/bin:/bin" \
+PATH="$fake_bin:$toolchain_bin:/usr/local/bin:/usr/bin:/bin" \
 PR_REVIEW_PROVIDER=codex \
 PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
 PR_REVIEW_TIMEOUT=5s \
@@ -78,11 +119,9 @@ grep -Fqx 'owner/repository#7 conversation head thread 42' \
     "$home_dir/.local/state/pr-review/pr-watch.seen" || fail "confirmed watcher state was not committed"
 grep -Fq 'confirmed review 102 for owner/repository#7 at head-sha' \
     "$home_dir/.local/state/pr-review/cron.log" || fail "review was not confirmed in the log"
-grep -Fqx -- '--model' "$provider_args" || fail "Codex model flag was not passed"
-grep -Fqx -- 'gpt-5.6-sol' "$provider_args" || fail "Codex model was not pinned"
-grep -Fqx -- '--config' "$provider_args" || fail "Codex config flag was not passed"
-grep -Fqx -- 'model_reasoning_effort="high"' "$provider_args" || \
-    fail "Codex reasoning effort was not pinned"
+assert_arg_pair "$provider_args" --model gpt-5.6-sol "Codex model was not pinned"
+assert_arg_pair "$provider_args" --config 'model_reasoning_effort="high"' \
+    "Codex reasoning effort was not pinned"
 
 cat >"$fake_bin/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -103,10 +142,8 @@ PR_WATCH_ITEM=owner/claude#8 \
 REVIEW_SUBMITTED="$review_marker" \
 PROVIDER_ARGS="$provider_args" \
     "$project_dir/bin/pr-review-cron"
-grep -Fqx -- '--model' "$provider_args" || fail "Claude model flag was not passed"
-grep -Fqx -- 'claude-opus-5' "$provider_args" || fail "Claude model was not pinned"
-grep -Fqx -- '--effort' "$provider_args" || fail "Claude effort flag was not passed"
-grep -Fqx -- 'high' "$provider_args" || fail "Claude effort was not pinned"
+assert_arg_pair "$provider_args" --model claude-opus-5 "Claude model was not pinned"
+assert_arg_pair "$provider_args" --effort high "Claude effort was not pinned"
 
 cat >"$fake_bin/agy" <<'EOF'
 #!/usr/bin/env bash
@@ -128,30 +165,71 @@ PR_WATCH_ITEM=owner/gemini#9 \
 REVIEW_SUBMITTED="$review_marker" \
 PROVIDER_ARGS="$provider_args" \
     "$project_dir/bin/pr-review-cron"
-grep -Fqx -- '--model' "$provider_args" || fail "Antigravity model flag was not passed"
-grep -Fqx -- 'gemini-3.7-flash-high' "$provider_args" || fail "Antigravity model was not pinned"
-grep -Fqx -- '--effort' "$provider_args" || fail "Antigravity effort flag was not passed"
-grep -Fqx -- 'high' "$provider_args" || fail "Antigravity effort was not pinned"
+assert_arg_pair "$provider_args" --model gemini-3.7-flash-high \
+    "Antigravity model was not pinned"
+assert_arg_pair "$provider_args" --effort high "Antigravity effort was not pinned"
 
 rm -- "$review_marker"
+head_calls="$test_dir/head-calls"
+if HOME="$home_dir" \
+    PATH="$fake_bin:$toolchain_bin:/usr/local/bin:/usr/bin:/bin" \
+    PR_REVIEW_PROVIDER=codex \
+    PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
+    PR_REVIEW_TIMEOUT=5s \
+    PR_WATCH_ITEM=owner/confirmation#10 \
+    REVIEW_SUBMITTED="$review_marker" \
+    PROVIDER_ARGS="$provider_args" \
+    HEAD_CALLS="$head_calls" \
+    POST_CONFIRM_FAIL=1 \
+        "$project_dir/bin/pr-review-cron"; then
+    fail "post-provider confirmation failure succeeded"
+fi
+grep -Fq 'confirmation query failed for owner/confirmation#10' \
+    "$home_dir/.local/state/pr-review/cron.log" || \
+    fail "post-provider confirmation failure aborted without a diagnostic"
+
+rm -- "$review_marker"
+failure_calls="$test_dir/failure-calls"
 cat >"$fake_bin/codex" <<'EOF'
 #!/usr/bin/env bash
+count=0
+[[ ! -e "$PROVIDER_CALLS" ]] || read -r count <"$PROVIDER_CALLS"
+printf '%s\n' "$((count + 1))" >"$PROVIDER_CALLS"
 exit 1
 EOF
 chmod +x "$fake_bin/codex"
 
-if HOME="$home_dir" \
-    PATH="$fake_bin:/usr/local/bin:/usr/bin:/bin" \
-    PR_REVIEW_PROVIDER=codex \
-    PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
-    PR_REVIEW_TIMEOUT=5s \
-    PR_WATCH_ITEM=owner/another#8 \
-    REVIEW_SUBMITTED="$review_marker" \
-        "$project_dir/bin/pr-review-cron"; then
-    fail "unconfirmed provider run succeeded"
-fi
+for attempt in 1 2; do
+    if HOME="$home_dir" \
+        PATH="$fake_bin:/usr/local/bin:/usr/bin:/bin" \
+        PR_REVIEW_PROVIDER=codex \
+        PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
+        PR_REVIEW_MAX_FAILURES=2 \
+        PR_REVIEW_TIMEOUT=5s \
+        PR_WATCH_ITEM=owner/another#8 \
+        PR_WATCH_RECORD_STATE=0 \
+        REVIEW_SUBMITTED="$review_marker" \
+        PROVIDER_CALLS="$failure_calls" \
+            "$project_dir/bin/pr-review-cron"; then
+        fail "unconfirmed provider run $attempt succeeded"
+    fi
+done
+HOME="$home_dir" \
+PATH="$fake_bin:/usr/local/bin:/usr/bin:/bin" \
+PR_REVIEW_PROVIDER=codex \
+PR_REVIEW_CODEX_BIN="$fake_bin/codex" \
+PR_REVIEW_MAX_FAILURES=2 \
+PR_REVIEW_TIMEOUT=5s \
+PR_WATCH_ITEM=owner/another#8 \
+PR_WATCH_RECORD_STATE=0 \
+REVIEW_SUBMITTED="$review_marker" \
+PROVIDER_CALLS="$failure_calls" \
+    "$project_dir/bin/pr-review-cron"
+[[ "$(cat "$failure_calls")" == "2" ]] || fail "provider retries were not bounded"
+grep -Fq 'ESCALATE: owner/another#8 failed 2 consecutive attempt(s)' \
+    "$home_dir/.local/state/pr-review/cron.log" || fail "provider failures did not escalate"
 if grep -Fq 'owner/another#8 ' "$home_dir/.local/state/pr-review/pr-watch.seen"; then
-    fail "failed provider state was committed"
+    fail "failed primary provider state was committed"
 fi
 
 if HOME="$home_dir" PR_REVIEW_PROVIDER=unknown "$project_dir/bin/pr-review-cron" 2>/dev/null; then

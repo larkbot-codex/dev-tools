@@ -251,7 +251,7 @@ pr-watch() (
     local configured_reviewer="${PR_WATCH_REVIEWER:-}"
     local verbose="${PR_WATCH_VERBOSE:-0}"
     local max_followups="${PR_WATCH_MAX_FOLLOWUPS:-2}"
-    local authenticated reviewer state_file lock_dir
+    local authenticated reviewer state_file lock_file lock_fd
     local rows row_count checked=0
 
     if [[ ! "$owner" =~ ^[A-Za-z0-9-]+$ ]]; then
@@ -290,12 +290,15 @@ pr-watch() (
         _dev_pr_watch_error "cannot open state file $state_file"
         return 1
     }
-    lock_dir="${state_file}.lock"
-    if ! mkdir -- "$lock_dir" 2>/dev/null; then
+    lock_file="${state_file}.lock"
+    if ! exec {lock_fd}>"$lock_file"; then
+        _dev_pr_watch_error "cannot open watcher lock $lock_file"
+        return 1
+    fi
+    if ! flock -n "$lock_fd"; then
         _dev_pr_watch_error "another watcher is using $state_file"
         return 1
     fi
-    trap 'rmdir -- "$lock_dir"' EXIT
 
     rows=$(gh search prs --owner "$owner" --state open --limit 1000 \
         --json number,repository,author,isDraft \
@@ -338,11 +341,11 @@ pr-watch() (
     while IFS= read -r row; do
         [[ -n "$row" ]] || continue
         IFS=$'\t' read -r repo number search_author search_draft <<<"$row"
-        checked=$((checked + 1))
 
         if [[ "${search_author,,}" == "${reviewer,,}" || "$search_draft" == "true" ]]; then
             continue
         fi
+        checked=$((checked + 1))
 
         details=$(gh api "/repos/$repo/pulls/$number" \
             --jq '[.head.sha, (.draft | tostring), (.user.login // "")] | @tsv') || {

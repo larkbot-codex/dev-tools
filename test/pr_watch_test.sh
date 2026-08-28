@@ -115,6 +115,10 @@ run_watch new-head "$test_dir/new-head.state"
 [[ "$watch_status" -eq 0 ]] || fail "new-head watch failed"
 [[ "$(cat "$test_dir/stdout")" == "thelarklan/repo#1" ]] || fail "new head was not reported"
 
+touch "$test_dir/persistent-lock.state.lock"
+run_watch new-head "$test_dir/persistent-lock.state"
+[[ "$watch_status" -eq 0 ]] || fail "an unlocked lock file wedged the watcher"
+
 run_watch dismissed "$test_dir/dismissed.state"
 [[ "$watch_status" -eq 0 ]] || fail "dismissed-review watch failed"
 [[ "$(cat "$test_dir/stdout")" == "thelarklan/repo#1" ]] || fail "dismissed review suppressed work"

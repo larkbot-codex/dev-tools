@@ -215,8 +215,12 @@ helper.
 calls `pr-watch`, gives each work item to Codex, Claude, Gemini CLI, or
 Antigravity, and accepts the result only after GitHub reports a new review at
 the current head. Watcher state is committed only after that confirmation, so
-a failed provider run is retried. Events marked `ESCALATE` are recorded and
-left for a human instead of starting another autonomous review round.
+a failed provider run is retried up to three times per pull-request head. A
+third consecutive failure is recorded in
+`~/.local/state/pr-review/provider-failures`, logged as `ESCALATE`, and paused
+until the head changes or the matching failure-state line is removed. Events
+marked `ESCALATE` by the watcher are recorded and left for a human instead of
+starting another autonomous review round.
 
 Open `crontab -e` in the matching WSL account and copy the environment and job
 lines from one staggered example:
@@ -248,8 +252,10 @@ Logs are written to `~/.local/state/pr-review/cron.log`. Useful overrides:
 | `PR_REVIEW_OWNER` | `PR_WATCH_OWNER` or `thelarklan` | Account whose pull requests are reviewed. |
 | `PR_REVIEW_REVIEWER` | Authenticated `gh` login | Fail-closed reviewer identity assertion. |
 | `PR_REVIEW_MAX_FOLLOWUPS` | `2` | Autonomous conversation rounds per head. |
+| `PR_REVIEW_MAX_FAILURES` | `3` | Consecutive unconfirmed provider runs allowed per PR head before pausing. |
 | `PR_REVIEW_TIMEOUT` | `45m` | Maximum time for one provider invocation. |
 | `PR_REVIEW_WORK_ROOT` | `~/.local/share/pr-review/work` | Provider working directory. |
+| `PR_REVIEW_PATH` | Inherited `PATH` | Provider and toolchain search path, after `~/.local/bin`. |
 | `PR_REVIEW_GEMINI_DRIVER` | `gemini` | Gemini adapter: `gemini` or `agy`. |
 | `PR_REVIEW_CODEX_MODEL` | `gpt-5.6-sol` | Codex model pin. |
 | `PR_REVIEW_CODEX_EFFORT` | `high` | Codex reasoning-effort pin. |

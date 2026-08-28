@@ -10,7 +10,13 @@ case "$provider" in
         ;;
 esac
 
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+max_failures="${PR_REVIEW_MAX_FAILURES:-3}"
+if [[ ! "$max_failures" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pr-review-cron: PR_REVIEW_MAX_FAILURES must be a positive integer\n' >&2
+    exit 2
+fi
+
+export PATH="$HOME/.local/bin:${PR_REVIEW_PATH:-$PATH}"
 export LC_ALL=C
 
 helper="${DEV_TOOLS_HELPER:-$HOME/.bashrc.d/dev-tools-git.sh}"
@@ -19,10 +25,11 @@ cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/pr-review"
 work_root="${PR_REVIEW_WORK_ROOT:-$HOME/.local/share/pr-review/work}"
 log_file="$state_dir/cron.log"
 state_file="$state_dir/pr-watch.seen"
+failure_file="$state_dir/provider-failures"
 owner="${PR_REVIEW_OWNER:-${PR_WATCH_OWNER:-thelarklan}}"
 
 mkdir -p -- "$state_dir" "$cache_dir" "$work_root"
-touch -- "$log_file" "$state_file"
+touch -- "$log_file" "$state_file" "$failure_file"
 if (( $(stat -c %s -- "$log_file") > 5242880 )); then
     tail -n 2000 -- "$log_file" >"$log_file.next"
     mv -f -- "$log_file.next" "$log_file"
@@ -53,10 +60,11 @@ error_file="$run_dir/errors"
 candidate_state="$run_dir/state.seen"
 before_state="$run_dir/state.before"
 delta_file="$run_dir/state.delta"
+failure_next="$run_dir/provider-failures.next"
 
 cleanup() {
-    rm -f -- "$work_file" "$error_file" "$candidate_state" "$before_state" "$delta_file"
-    rmdir -- "${candidate_state}.lock" 2>/dev/null || true
+    rm -f -- "$work_file" "$error_file" "$candidate_state" "$before_state" \
+        "$delta_file" "$failure_next" "${candidate_state}.lock"
     rmdir -- "$run_dir" 2>/dev/null || true
 }
 trap cleanup EXIT HUP INT TERM
@@ -86,6 +94,32 @@ commit_item_state() {
     local item="$1"
     awk -v prefix="$item " 'index($0, prefix) == 1' "$delta_file" >>"$state_file"
     sort -u -o "$state_file" -- "$state_file"
+}
+
+failure_count() {
+    local item="$1" head="$2"
+    awk -v item="$item" -v head="$head" '
+        $1 == item && $2 == head { print $3; found = 1; exit }
+        END { if (!found) print 0 }
+    ' "$failure_file"
+}
+
+record_failure() {
+    local item="$1" head="$2" count
+    count=$(failure_count "$item" "$head")
+    count=$((count + 1))
+    awk -v item="$item" -v head="$head" \
+        '!($1 == item && $2 == head)' "$failure_file" >"$failure_next"
+    printf '%s %s %s\n' "$item" "$head" "$count" >>"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+    printf '%s\n' "$count"
+}
+
+clear_failures() {
+    local item="$1" head="$2"
+    awk -v item="$item" -v head="$head" \
+        '!($1 == item && $2 == head)' "$failure_file" >"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
 }
 
 latest_review() {
@@ -170,6 +204,7 @@ run_provider() {
 
 processed=0
 failed=0
+paused=0
 while IFS= read -r item; do
     [[ -n "$item" ]] || continue
     if [[ ! "$item" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$ ]]; then
@@ -186,9 +221,14 @@ while IFS= read -r item; do
 
     repo="${item%#*}"
     number="${item##*#}"
+    current_head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq '.headRefOid')
+    attempt_count=$(failure_count "$item" "$current_head")
+    if ((attempt_count >= max_failures)); then
+        paused=$((paused + 1))
+        continue
+    fi
     before_review=$(latest_review "$repo" "$number")
     before_review_id="${before_review%%$'\t'*}"
-    current_head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq '.headRefOid')
     prompt="$(printf '%s\n' \
         "This is an autonomous scheduled pull-request review for $item, running as GitHub identity $reviewer." \
         "" \
@@ -205,25 +245,41 @@ while IFS= read -r item; do
     provider_status=$?
     set -e
 
+    set +e
     after_head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq '.headRefOid')
+    after_head_status=$?
     after_review=$(latest_review "$repo" "$number")
+    after_review_status=$?
+    set -e
     after_review_id="${after_review%%$'\t'*}"
     after_review_commit="${after_review#*$'\t'}"
-    if (( provider_status == 0 )) &&
+    if (( provider_status == 0 && after_head_status == 0 && after_review_status == 0 )) &&
         [[ -n "$after_review_id" ]] &&
         [[ "$after_review_id" != "$before_review_id" ]] &&
         [[ "$after_review_commit" == "$after_head" ]]; then
         commit_item_state "$item"
+        clear_failures "$item" "$current_head"
         processed=$((processed + 1))
         printf '[%s] confirmed review %s for %s at %s\n' \
             "$(date --iso-8601=seconds)" "$after_review_id" "$item" "$after_head"
     else
         failed=$((failed + 1))
+        attempt_count=$(record_failure "$item" "$current_head")
+        if ((after_head_status != 0 || after_review_status != 0)); then
+            printf 'pr-review-cron: confirmation query failed for %s (head-status=%s, review-status=%s)\n' \
+                "$item" "$after_head_status" "$after_review_status"
+        fi
         printf 'pr-review-cron: %s was not confirmed (provider=%s, before=%s, after=%s, head=%s)\n' \
-            "$item" "$provider_status" "${before_review_id:-none}" "${after_review_id:-none}" "$after_head"
+            "$item" "$provider_status" "${before_review_id:-none}" "${after_review_id:-none}" \
+            "${after_head:-unknown}"
+        if ((attempt_count >= max_failures)); then
+            commit_item_state "$item"
+            printf 'pr-review-cron: ESCALATE: %s failed %s consecutive attempt(s) at %s; automatic retries paused\n' \
+                "$item" "$attempt_count" "$current_head"
+        fi
     fi
 done <"$work_file"
 
-printf '[%s] %s watcher finished: %s confirmed, %s failed\n' \
-    "$(date --iso-8601=seconds)" "$provider" "$processed" "$failed"
+printf '[%s] %s watcher finished: %s confirmed, %s failed, %s paused\n' \
+    "$(date --iso-8601=seconds)" "$provider" "$processed" "$failed" "$paused"
 (( failed == 0 ))
