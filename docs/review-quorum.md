@@ -7,12 +7,14 @@ permissions are limited to pull-request and metadata reads plus check-run reads
 and writes.
 
 For each open pull request in a repository owned by `thelarklan`, the evaluator
-publishes the `bot-review-quorum` check on the exact pull-request head. It passes
-only when the author is one of the three configured bot account IDs and both of
-the other bot IDs have a latest decisive `APPROVED` review for that same head.
-Approvals by the author, `thelarklan`, or any account outside the cohort never
-count. Drafts, other base branches, stale approvals, dismissals, change
-requests, API errors, and a head change during evaluation fail closed.
+publishes the `bot-review-quorum` check on the exact pull-request head. For a
+bot-authored pull request, both other bot IDs must have a latest decisive
+`APPROVED` review for that same head. For an owner-authored pull request, any two
+of the three bot IDs must approve the exact head. Approvals by the author,
+`thelarklan`, or any account outside the cohort never count. Authors outside the
+owner-plus-bot set, drafts, other base branches, stale approvals, dismissals,
+change requests, a review-read error, and a head change during evaluation do not
+receive a successful result.
 
 ## Trusted deployment configuration
 
@@ -91,6 +93,11 @@ while auto-merge is enabled, `thelarklan` must not approve a bot-authored pull
 request. If such an approval is submitted, disable auto-merge on that pull
 request until the evaluator has published a fresh non-successful result or the
 two exact-head bot approvals have been independently reverified.
+
+An API failure before the evaluator can enumerate a repository or pull request
+causes a nonzero poll but cannot revoke a previously published check until API
+access recovers. The native two-approval rule and the owner-approval constraint
+are the safety boundary during that interval.
 
 The evaluator supplies one required check; GitHub remains the only component
 that performs the merge.

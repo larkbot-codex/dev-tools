@@ -50,10 +50,11 @@ the loader.
 
 The optional `pr-review-quorum` command authenticates as the dedicated
 least-privilege GitHub App, polls its installation repositories, and publishes
-the required `bot-review-quorum` check. It pins immutable account IDs and passes
-only when a cohort bot authored the pull request and the other two cohort bots
-approved its exact current head. The repository owner and all other accounts
-are excluded from the quorum.
+the required `bot-review-quorum` check. It pins immutable account IDs. A
+bot-authored pull request needs exact-head approvals from the other two cohort
+bots; an owner-authored pull request needs exact-head approvals from any two
+cohort bots. The repository owner's approval and all outside accounts are
+excluded from the quorum.
 
 Credential setup, scheduling, audit output, the personal-repository safety
 constraint, and the required ruleset are documented in the [bot review quorum

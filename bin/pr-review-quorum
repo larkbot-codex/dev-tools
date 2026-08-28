@@ -85,12 +85,13 @@ collect_pages() {
 }
 
 evaluate_quorum() {
-    local pull_file="$1" reviews_file="$2" default_branch="$3" bot_ids_json="$4"
+    local pull_file="$1" reviews_file="$2" default_branch="$3" bot_ids_json="$4" owner_id="$5"
     jq -cn \
         --slurpfile pull "$pull_file" \
         --slurpfile reviews "$reviews_file" \
         --arg default_branch "$default_branch" \
-        --argjson bots "$bot_ids_json" '
+        --argjson bots "$bot_ids_json" \
+        --argjson owner "$owner_id" '
         def decisive:
           (.state // "" | ascii_upcase) as $state
           | select($state == "APPROVED" or $state == "CHANGES_REQUESTED" or $state == "DISMISSED")
@@ -107,31 +108,33 @@ evaluate_quorum() {
             | reduce .[] as $review ({}; .[($review.user_id | tostring)] = $review)) as $latest
         | ($pr.head.sha // "") as $head
         | ($pr.user.id // 0) as $author
-        | ($bots | map(select(. != $author))) as $required
-        | ($required | map(
+        | ($bots | map(select(. != $author))) as $eligible
+        | ($eligible | map(
             . as $id
             | ($latest[($id | tostring)] // {
                 user_id: $id, login: "unknown", state: "MISSING", commit_id: "", submitted_at: ""
               })
             | . + {exact_head: (.state == "APPROVED" and .commit_id == $head)}
           )) as $observed
+        | ($observed | map(select(.exact_head)) | length) as $approval_count
         | if ($pr.state // "" | ascii_downcase) != "open" then
             {conclusion:"failure", title:"Pull request is not open", summary:"The quorum gate only passes open pull requests."}
           elif ($pr.draft // false) then
             {conclusion:"failure", title:"Pull request is a draft", summary:"Mark the pull request ready before quorum can pass."}
           elif ($pr.base.ref // "") != $default_branch then
             {conclusion:"failure", title:"Pull request targets an unprotected branch", summary:("Expected base " + $default_branch + ", observed " + ($pr.base.ref // "unknown") + ".")}
-          elif ($bots | index($author)) == null then
-            {conclusion:"failure", title:"Author is outside the bot cohort", summary:("Author ID " + ($author | tostring) + " is not one of the three configured bot accounts. Non-bot approvals cannot satisfy quorum.")}
-          elif ($observed | all(.exact_head)) then
-            {conclusion:"success", title:"Exact-head bot quorum satisfied", summary:("Both non-author bot accounts approved head " + $head + ".")}
+          elif $author != $owner and ($bots | index($author)) == null then
+            {conclusion:"failure", title:"Author is outside the trusted author set", summary:("Author ID " + ($author | tostring) + " is neither the configured repository owner nor one of the three bot accounts.")}
+          elif $approval_count >= 2 then
+            {conclusion:"success", title:"Exact-head bot quorum satisfied", summary:((if $author == $owner then "Two configured bot accounts" else "Both non-author bot accounts" end) + " approved head " + $head + ".")}
           else
             {conclusion:"failure", title:"Exact-head bot quorum is incomplete", summary:("Required bot review state: " + ($observed | map((.user_id | tostring) + "=" + .state + (if .commit_id == "" then "" else "@" + .commit_id end)) | join(", ")) + ". Approvals from the author, repository owner, or any other account do not count.")}
           end
         | . + {
             head_sha:$head,
             author_id:$author,
-            required_ids:$required,
+            eligible_reviewer_ids:$eligible,
+            required_approval_count:2,
             observed:$observed
           }
     '
@@ -176,11 +179,12 @@ publish_check() {
         --argjson pull "$pull_number" \
         --arg head "$head" \
         --argjson author "$(jq -r '.author_id' <<<"$evaluation")" \
-        --argjson required "$(jq -c '.required_ids' <<<"$evaluation")" \
+        --argjson eligible "$(jq -c '.eligible_reviewer_ids' <<<"$evaluation")" \
+        --argjson required_count "$(jq -r '.required_approval_count' <<<"$evaluation")" \
         --argjson observed "$(jq -c '.observed' <<<"$evaluation")" \
         --arg conclusion "$conclusion" \
         --argjson check "$check_id" \
-        '{repository:$repository,pull:$pull,head:$head,author_id:$author,required_ids:$required,observed:$observed,conclusion:$conclusion,check_run_id:$check}'
+        '{repository:$repository,pull:$pull,head:$head,author_id:$author,eligible_reviewer_ids:$eligible,required_approval_count:$required_count,observed:$observed,conclusion:$conclusion,check_run_id:$check}'
 }
 
 validate_configuration() {
@@ -287,7 +291,7 @@ main() {
             fi
             printf '%s\n' "$reviews" >"$reviews_file"
             evaluation=$(evaluate_quorum "$pull_file" "$reviews_file" \
-                "$default_branch" "$bot_ids_json") || {
+                "$default_branch" "$bot_ids_json" "$QUORUM_OWNER_ID") || {
                 quorum_error "could not evaluate $full_name#$pull_number"
                 failures=$((failures + 1))
                 continue

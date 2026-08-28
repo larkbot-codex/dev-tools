@@ -34,7 +34,7 @@ write_reviews() {
 }
 
 conclusion() {
-    evaluate_quorum "$pull_file" "$reviews_file" main "$bots" | jq -r '.conclusion'
+    evaluate_quorum "$pull_file" "$reviews_file" main "$bots" "$owner" | jq -r '.conclusion'
 }
 
 review() {
@@ -81,9 +81,16 @@ gemini_change=$(review "$bot_gemini" larkbot-gemini CHANGES_REQUESTED "$head_sha
 write_reviews "[$claude_review,$gemini_approval,$gemini_change]"
 [[ "$(conclusion)" == failure ]] || fail 'latest change request did not override approval'
 
-write_pull "$owner"
+write_pull 999999999
 write_reviews "[$claude_review,$gemini_approval]"
 [[ "$(conclusion)" == failure ]] || fail 'outside author passed the cohort gate'
+
+write_pull "$owner"
+write_reviews "[$claude_review,$gemini_approval]"
+[[ "$(conclusion)" == success ]] || fail 'owner-authored pull request did not accept two bot approvals'
+
+write_reviews "[$claude_review,$owner_review]"
+[[ "$(conclusion)" == failure ]] || fail 'owner approval counted on an owner-authored pull request'
 
 write_pull "$bot_codex" true
 write_reviews "[$claude_review,$gemini_approval]"
