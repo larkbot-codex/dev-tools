@@ -9,14 +9,24 @@ request against the canonical upstream, comments on that pull request, finds
 open pull requests that need review, and runs a least-privilege GitHub App check
 for an exact-head three-bot review quorum.
 
-## Human verification
+## Merge verification
 
 Pull requests are intended to remain small enough for hands-on verification.
 Before merging, record the exact manual steps, expected and observed results,
 cleanup instructions, known limitations, and behavior deliberately deferred to
-a later change. Merging remains a deliberate maintainer action in GitHub. Use
-the [human verification checklist](docs/human-verification.md) as a reusable
-review record.
+a later change.
+
+Until the protected gate is deployed and verified, use a deliberate maintainer
+merge and the [human verification checklist](docs/human-verification.md) as a
+reusable review record. A protected automatic merge is safe when a trusted,
+least-privilege check proves that the pull request was authored by one member
+of a configured three-agent cohort and the other two members approved the exact
+current head, while an organization ruleset synchronously requires two
+approvals from that cohort's dedicated team and all CI for that revision. A
+user-owned repository cannot enforce the team-scoped quorum and must retain the
+maintainer path. GitHub, not an agent or repository helper, performs an eligible
+automatic merge. See the [protected automatic merge
+contract](docs/automatic-merge.md).
 
 ## Requirements
 
@@ -296,10 +306,11 @@ silently omitting work.
 
 ## Clean up after a merge
 
-Merging remains a deliberate maintainer action in GitHub after review and
-hands-on verification. Dev-tools intentionally does not provide a `pr-merge`
-command. After GitHub reports the pull request merged, stay on its feature
-branch and run:
+Merging occurs as a deliberate maintainer action until the documented protected
+automatic merge gate is deployed and verified. Dev-tools intentionally does
+not provide a `pr-merge` command; the protected path uses GitHub auto-merge
+after every required rule and trusted check passes. After GitHub reports the
+pull request merged, stay on its feature branch and run:
 
 ```bash
 pr-cleanup
