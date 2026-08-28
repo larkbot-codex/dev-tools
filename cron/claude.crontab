@@ -1,0 +1,5 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+PR_REVIEW_PATH=CHANGE_ME
+
+1-56/5 * * * * /usr/bin/flock -n "$HOME/.cache/pr-review/cron.lock" /usr/bin/env PR_REVIEW_PROVIDER=claude PR_REVIEW_REVIEWER=CHANGE_ME PR_REVIEW_CLAUDE_MODEL=claude-opus-5 PR_REVIEW_CLAUDE_EFFORT=high "$HOME/.local/bin/pr-review-cron"

@@ -3,6 +3,7 @@ set -euo pipefail
 
 target_dir="${HOME}/.bashrc.d"
 target_file="${target_dir}/dev-tools-git.sh"
+cron_runner="${HOME}/.local/bin/pr-review-cron"
 bashrc_file="${HOME}/.bashrc"
 
 if [[ -f "$target_file" ]]; then
@@ -10,6 +11,13 @@ if [[ -f "$target_file" ]]; then
     printf 'Removed %s\n' "$target_file"
 else
     printf 'Already absent: %s\n' "$target_file"
+fi
+
+if [[ -f "$cron_runner" ]]; then
+    rm -- "$cron_runner"
+    printf 'Removed %s\n' "$cron_runner"
+else
+    printf 'Already absent: %s\n' "$cron_runner"
 fi
 
 # Preserve the shared loader whenever another shell extension still uses it.

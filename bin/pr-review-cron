@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+provider="${PR_REVIEW_PROVIDER:-}"
+case "$provider" in
+    codex | claude | gemini) ;;
+    *)
+        printf 'pr-review-cron: PR_REVIEW_PROVIDER must be codex, claude, or gemini\n' >&2
+        exit 2
+        ;;
+esac
+
+max_failures="${PR_REVIEW_MAX_FAILURES:-3}"
+if [[ ! "$max_failures" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'pr-review-cron: PR_REVIEW_MAX_FAILURES must be a positive integer\n' >&2
+    exit 2
+fi
+
+review_path="${PR_REVIEW_PATH:-$PATH}"
+if [[ "$review_path" == "CHANGE_ME" ]]; then
+    printf 'pr-review-cron: replace PR_REVIEW_PATH=CHANGE_ME with the provider toolchain PATH\n' >&2
+    exit 2
+fi
+export PATH="$HOME/.local/bin:$review_path"
+export LC_ALL=C
+
+helper="${DEV_TOOLS_HELPER:-$HOME/.bashrc.d/dev-tools-git.sh}"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/pr-review"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/pr-review"
+work_root="${PR_REVIEW_WORK_ROOT:-$HOME/.local/share/pr-review/work}"
+log_file="$state_dir/cron.log"
+state_file="$state_dir/pr-watch.seen"
+failure_file="$state_dir/provider-failures"
+owner="${PR_REVIEW_OWNER:-${PR_WATCH_OWNER:-thelarklan}}"
+
+mkdir -p -- "$state_dir" "$cache_dir" "$work_root"
+touch -- "$log_file" "$state_file" "$failure_file"
+if (( $(stat -c %s -- "$log_file") > 5242880 )); then
+    tail -n 2000 -- "$log_file" >"$log_file.next"
+    mv -f -- "$log_file.next" "$log_file"
+fi
+exec >>"$log_file" 2>&1
+
+printf '\n[%s] %s watcher started\n' "$(date --iso-8601=seconds)" "$provider"
+if [[ ! -r "$helper" ]]; then
+    printf 'pr-review-cron: missing watcher helper %s\n' "$helper"
+    exit 1
+fi
+# shellcheck source=/dev/null
+source "$helper"
+
+authenticated=$(gh api user --jq '.login') || {
+    printf 'pr-review-cron: cannot read the authenticated GitHub identity\n'
+    exit 1
+}
+reviewer="${PR_REVIEW_REVIEWER:-$authenticated}"
+if [[ "${authenticated,,}" != "${reviewer,,}" ]]; then
+    printf 'pr-review-cron: authenticated as %s, expected %s\n' "$authenticated" "$reviewer"
+    exit 1
+fi
+
+run_dir=$(mktemp -d "$cache_dir/run.XXXXXXXX")
+work_file="$run_dir/work"
+error_file="$run_dir/errors"
+candidate_state="$run_dir/state.seen"
+before_state="$run_dir/state.before"
+delta_file="$run_dir/state.delta"
+failure_next="$run_dir/provider-failures.next"
+
+cleanup() {
+    rm -f -- "$work_file" "$error_file" "$candidate_state" "$before_state" \
+        "$delta_file" "$failure_next" "${candidate_state}.lock"
+    rmdir -- "$run_dir" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
+
+sort -u -- "$state_file" >"$before_state"
+cp -- "$before_state" "$candidate_state"
+
+set +e
+DEV_TOOLS_PR_WATCH_STATE="$candidate_state" \
+PR_WATCH_OWNER="$owner" \
+PR_WATCH_REVIEWER="$reviewer" \
+PR_WATCH_MAX_FOLLOWUPS="${PR_REVIEW_MAX_FOLLOWUPS:-2}" \
+PR_WATCH_VERBOSE=1 \
+pr-watch >"$work_file" 2>"$error_file"
+watch_status=$?
+set -e
+
+cat -- "$error_file"
+if (( watch_status != 0 )); then
+    printf 'pr-review-cron: watcher failed with status %s\n' "$watch_status"
+    exit "$watch_status"
+fi
+
+sort -u -- "$candidate_state" | comm -13 "$before_state" - >"$delta_file"
+
+commit_item_state() {
+    local item="$1"
+    awk -v prefix="$item " 'index($0, prefix) == 1' "$delta_file" >>"$state_file"
+    sort -u -o "$state_file" -- "$state_file"
+}
+
+failure_count() {
+    local item="$1" head="$2"
+    awk -v item="$item" -v head="$head" '
+        $1 == item && $2 == head { print $3; found = 1; exit }
+        END { if (!found) print 0 }
+    ' "$failure_file"
+}
+
+record_failure() {
+    local item="$1" head="$2" count
+    count=$(failure_count "$item" "$head")
+    count=$((count + 1))
+    awk -v item="$item" -v head="$head" \
+        '!($1 == item && $2 == head)' "$failure_file" >"$failure_next"
+    printf '%s %s %s\n' "$item" "$head" "$count" >>"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+    printf '%s\n' "$count"
+}
+
+clear_failures() {
+    local item="$1" head="$2"
+    awk -v item="$item" -v head="$head" \
+        '!($1 == item && $2 == head)' "$failure_file" >"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+}
+
+prune_inactive_failures() {
+    awk '
+        NR == FNR { if (NF) active[$1] = 1; next }
+        $1 in active
+    ' "$work_file" "$failure_file" >"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+}
+
+prune_other_heads() {
+    local item="$1" head="$2"
+    awk -v item="$item" -v head="$head" \
+        '!($1 == item && $2 != head)' "$failure_file" >"$failure_next"
+    mv -f -- "$failure_next" "$failure_file"
+}
+
+latest_review() {
+    local repo="$1" number="$2"
+    gh api --paginate "/repos/$repo/pulls/$number/reviews?per_page=100" \
+        --jq ".[] | select(((.user.login // \"\") | ascii_downcase) == \"${reviewer,,}\" and (.state // \"\") != \"DISMISSED\") | [(.id | tostring), (.commit_id // \"\")] | @tsv" \
+        | tail -n 1
+}
+
+resolve_executable() {
+    local configured="$1" fallback="$2"
+    if [[ -n "$configured" ]]; then
+        if [[ "$configured" == */* ]]; then
+            [[ -x "$configured" ]] || return 1
+            printf '%s\n' "$configured"
+        else
+            command -v "$configured"
+        fi
+    else
+        command -v "$fallback"
+    fi
+}
+
+run_provider() {
+    local prompt="$1" executable driver
+    case "$provider" in
+        codex)
+            executable=$(resolve_executable "${PR_REVIEW_CODEX_BIN:-}" codex) || {
+                printf 'pr-review-cron: Codex CLI is not installed\n' >&2
+                return 127
+            }
+            timeout --signal=TERM --kill-after=2m "${PR_REVIEW_TIMEOUT:-45m}" \
+                "$executable" exec --ephemeral --approve-for-me \
+                --skip-git-repo-check \
+                --model "${PR_REVIEW_CODEX_MODEL:-gpt-5.6-sol}" \
+                --config "model_reasoning_effort=\"${PR_REVIEW_CODEX_EFFORT:-high}\"" \
+                -C "$work_root" "$prompt"
+            ;;
+        claude)
+            executable=$(resolve_executable "${PR_REVIEW_CLAUDE_BIN:-}" claude) || {
+                printf 'pr-review-cron: Claude CLI is not installed\n' >&2
+                return 127
+            }
+            timeout --signal=TERM --kill-after=2m "${PR_REVIEW_TIMEOUT:-45m}" \
+                "$executable" --print --permission-mode bypassPermissions \
+                --no-session-persistence --output-format text \
+                --model "${PR_REVIEW_CLAUDE_MODEL:-claude-opus-5}" \
+                --effort "${PR_REVIEW_CLAUDE_EFFORT:-high}" "$prompt"
+            ;;
+        gemini)
+            driver="${PR_REVIEW_GEMINI_DRIVER:-gemini}"
+            case "$driver" in
+                gemini)
+                    executable=$(resolve_executable "${PR_REVIEW_GEMINI_BIN:-}" gemini) || {
+                        printf 'pr-review-cron: Gemini CLI is not installed\n' >&2
+                        return 127
+                    }
+                    timeout --signal=TERM --kill-after=2m "${PR_REVIEW_TIMEOUT:-45m}" \
+                        "$executable" --prompt "$prompt" --approval-mode yolo \
+                        --output-format text
+                    ;;
+                agy)
+                    executable=$(resolve_executable "${PR_REVIEW_GEMINI_BIN:-}" agy) || {
+                        printf 'pr-review-cron: Antigravity CLI (agy) is not installed\n' >&2
+                        return 127
+                    }
+                    timeout --signal=TERM --kill-after=2m "${PR_REVIEW_TIMEOUT:-45m}" \
+                        "$executable" --dangerously-skip-permissions \
+                        --output-format text --print-timeout "${PR_REVIEW_TIMEOUT:-45m}" \
+                        --model "${PR_REVIEW_ANTIGRAVITY_MODEL:-gemini-3.7-flash-high}" \
+                        --effort "${PR_REVIEW_ANTIGRAVITY_EFFORT:-high}" \
+                        --print="$prompt"
+                    ;;
+                *)
+                    printf 'pr-review-cron: PR_REVIEW_GEMINI_DRIVER must be gemini or agy\n' >&2
+                    return 2
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+prune_inactive_failures
+
+processed=0
+failed=0
+paused=0
+while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    if [[ ! "$item" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$ ]]; then
+        printf 'pr-review-cron: refusing malformed work item: %s\n' "$item"
+        failed=$((failed + 1))
+        continue
+    fi
+    if grep -Fq "ESCALATE: $item " "$error_file"; then
+        printf '[%s] %s requires human review; autonomous follow-ups stopped\n' \
+            "$(date --iso-8601=seconds)" "$item"
+        commit_item_state "$item"
+        continue
+    fi
+
+    repo="${item%#*}"
+    number="${item##*#}"
+    set +e
+    current_head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq '.headRefOid')
+    current_head_status=$?
+    before_review=$(latest_review "$repo" "$number")
+    before_review_status=$?
+    set -e
+    if ((current_head_status != 0 || before_review_status != 0)); then
+        failed=$((failed + 1))
+        printf 'pr-review-cron: preparation query failed for %s (head-status=%s, review-status=%s); provider not started\n' \
+            "$item" "$current_head_status" "$before_review_status"
+        continue
+    fi
+    prune_other_heads "$item" "$current_head"
+    attempt_count=$(failure_count "$item" "$current_head")
+    if ((attempt_count >= max_failures)); then
+        paused=$((paused + 1))
+        printf '[%s] %s at %s remains paused after %s unconfirmed attempt(s)\n' \
+            "$(date --iso-8601=seconds)" "$item" "$current_head" "$attempt_count"
+        continue
+    fi
+    before_review_id="${before_review%%$'\t'*}"
+    prompt="$(printf '%s\n' \
+        "This is an autonomous scheduled pull-request review for $item, running as GitHub identity $reviewer." \
+        "" \
+        "Use the GitHub CLI for GitHub reads and the final review submission. Inspect the complete diff, repository instructions, prior review conversation, and relevant surrounding code. Run proportionate tests when feasible. Re-read the pull request head immediately before submitting so no stale review is posted." \
+        "" \
+        "Submit exactly one new GitHub pull-request review at the current head using APPROVE, COMMENT, or REQUEST_CHANGES as warranted. Do not merely print a review locally. End the review body with this marker on its own line:" \
+        "_reviewed from: $provider-wsl-cron_" \
+        "" \
+        "Do not merge, push commits, modify any branch, mark drafts ready, or approve a self-authored pull request. Keep temporary work under /tmp or $work_root. If a safe review cannot be completed, exit nonzero and explain why instead of submitting a guess.")"
+
+    printf '[%s] reviewing %s at %s\n' "$(date --iso-8601=seconds)" "$item" "$current_head"
+    set +e
+    (cd -- "$work_root" && run_provider "$prompt")
+    provider_status=$?
+    set -e
+
+    set +e
+    after_head=$(gh pr view "$number" --repo "$repo" --json headRefOid --jq '.headRefOid')
+    after_head_status=$?
+    after_review=$(latest_review "$repo" "$number")
+    after_review_status=$?
+    set -e
+    after_review_id="${after_review%%$'\t'*}"
+    after_review_commit="${after_review#*$'\t'}"
+    if (( provider_status == 0 && after_head_status == 0 && after_review_status == 0 )) &&
+        [[ -n "$after_review_id" ]] &&
+        [[ "$after_review_id" != "$before_review_id" ]] &&
+        [[ "$after_review_commit" == "$after_head" ]]; then
+        commit_item_state "$item"
+        clear_failures "$item" "$current_head"
+        processed=$((processed + 1))
+        printf '[%s] confirmed review %s for %s at %s\n' \
+            "$(date --iso-8601=seconds)" "$after_review_id" "$item" "$after_head"
+    else
+        failed=$((failed + 1))
+        attempt_count=$(record_failure "$item" "$current_head")
+        if ((after_head_status != 0 || after_review_status != 0)); then
+            printf 'pr-review-cron: confirmation query failed for %s (head-status=%s, review-status=%s)\n' \
+                "$item" "$after_head_status" "$after_review_status"
+        fi
+        printf 'pr-review-cron: %s was not confirmed (provider=%s, before=%s, after=%s, head=%s)\n' \
+            "$item" "$provider_status" "${before_review_id:-none}" "${after_review_id:-none}" \
+            "${after_head:-unknown}"
+        if ((attempt_count >= max_failures)); then
+            commit_item_state "$item"
+            printf 'pr-review-cron: ESCALATE: %s failed %s consecutive attempt(s) at %s; automatic retries paused\n' \
+                "$item" "$attempt_count" "$current_head"
+        fi
+    fi
+done <"$work_file"
+
+printf '[%s] %s watcher finished: %s confirmed, %s failed, %s paused\n' \
+    "$(date --iso-8601=seconds)" "$provider" "$processed" "$failed" "$paused"
+(( failed == 0 ))

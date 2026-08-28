@@ -20,6 +20,8 @@ printf 'export EXISTING_SETTING=kept\n' >"$home_with_extension/.bashrc"
 
 HOME="$home_with_extension" "$project_dir/install.sh" >/dev/null
 [[ -f "$home_with_extension/.bashrc.d/dev-tools-git.sh" ]] || fail "helper was not installed"
+[[ -x "$home_with_extension/.local/bin/pr-review-cron" ]] || fail "cron runner was not installed"
+[[ -d "$home_with_extension/.cache/pr-review" ]] || fail "cron lock directory was not created"
 [[ "$(loader_count "$home_with_extension/.bashrc")" == 1 ]] || fail "loader was not added exactly once"
 
 HOME="$home_with_extension" "$project_dir/install.sh" >/dev/null
@@ -35,6 +37,7 @@ grep -q 'pr-rebase \[BASE\]' <<<"$help_output" || fail "pr-rebase is missing fro
 grep -q 'pr-create \[BASE\]' <<<"$help_output" || fail "pr-create is missing from help"
 grep -q 'pr-comment MESSAGE' <<<"$help_output" || fail "pr-comment is missing from help"
 grep -q 'pr-cleanup \[PR\]' <<<"$help_output" || fail "pr-cleanup is missing from help"
+grep -q '^  pr-watch$' <<<"$help_output" || fail "pr-watch is missing from help"
 grep -q '^  pr-help$' <<<"$help_output" || fail "pr-help is missing from help"
 if grep -q 'pr-merge' <<<"$help_output"; then
     fail "help advertises an automated merge command"
@@ -43,6 +46,7 @@ fi
 printf 'export OTHER_EXTENSION=kept\n' >"$home_with_extension/.bashrc.d/other.sh"
 HOME="$home_with_extension" "$project_dir/uninstall.sh" >/dev/null
 [[ ! -e "$home_with_extension/.bashrc.d/dev-tools-git.sh" ]] || fail "helper was not removed"
+[[ ! -e "$home_with_extension/.local/bin/pr-review-cron" ]] || fail "cron runner was not removed"
 [[ -f "$home_with_extension/.bashrc.d/other.sh" ]] || fail "another extension was removed"
 grep -Fq '# dev-tools bashrc.d loader' "$home_with_extension/.bashrc" || fail "shared loader was removed"
 
