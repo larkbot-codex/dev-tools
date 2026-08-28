@@ -13,7 +13,6 @@ pipeline {
       agent { label 'linux' }
       steps {
         checkout scm
-        sh 'bash scripts/verify.sh'
         sh '''
           if [ -n "${CHANGE_ID:-}" ]; then
             case "$CHANGE_ID" in
@@ -21,8 +20,12 @@ pipeline {
             esac
             git check-ref-format --branch "$CHANGE_TARGET" >/dev/null
             git fetch --no-tags origin \
-              "refs/heads/$CHANGE_TARGET:refs/remotes/origin/$CHANGE_TARGET" \
-              "refs/pull/$CHANGE_ID/head:refs/remotes/origin/pr/$CHANGE_ID/head"
+              "+refs/heads/$CHANGE_TARGET:refs/remotes/origin/$CHANGE_TARGET" \
+              "+refs/pull/$CHANGE_ID/head:refs/remotes/origin/pr/$CHANGE_ID/head"
+            git checkout --detach "refs/remotes/origin/pr/$CHANGE_ID/head"
+          fi
+          bash scripts/verify.sh
+          if [ -n "${CHANGE_ID:-}" ]; then
             bash scripts/verify-pr-diff.sh \
               "refs/remotes/origin/$CHANGE_TARGET" \
               "refs/remotes/origin/pr/$CHANGE_ID/head"

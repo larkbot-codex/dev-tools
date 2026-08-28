@@ -395,11 +395,12 @@ clean worktree surrounding an already-created commit.
 ## Local Jenkins verification
 
 The repository-owned Declarative `Jenkinsfile` runs on an agent labeled
-`linux`. It performs a normal source checkout, runs ShellCheck across the shell
-surface, and executes every `test/*.sh` script. For a pull-request build it also
-fetches the exact source head and target branch, then validates the complete
-merge-base-to-head diff. New shell tests are picked up without editing the
-pipeline.
+`linux`. It performs a normal source checkout. For a pull-request build it then
+fetches and checks out the exact numbered source head before running ShellCheck
+across the shell surface and every `test/*.sh` script, and validates the complete
+merge-base-to-head diff against the requested target branch. Branch builds run
+the same verification suite on their checked-out revision. New shell tests are
+picked up without editing the pipeline.
 
 The pipeline requires Bash, Git, and ShellCheck on the agent. It does not need
 developer credentials, a host-home mount, a container-engine socket, or a

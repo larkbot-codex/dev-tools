@@ -22,6 +22,11 @@ evaluator and its deployment, or the automatic-merge contract. The local
 the organization ruleset applies; they do not substitute for the human approval
 on a protected path.
 
+Because `@thelarklan` is the sole human owner, protected-path changes must be
+agent-authored so that `@thelarklan` remains eligible to approve them. The human
+owner must not author such a change until another eligible human owner is added.
+No exception authorizes an agent or maintainer to bypass the repository rules.
+
 ## Current enforcement
 
 The ruleset audit on 2026-08-28 found an active two-approval gate with stale
@@ -68,6 +73,35 @@ feature branch.
 
 ## Exceptions
 
-The repository-specific `pr-cleanup` workflow is an extension of the shared
-standard. It verifies the exact merged pull request, synchronizes the default
-branch, and removes only the matching local and fork feature branches.
+### Human-approval enforcement gap
+
+- Rule: protected and explicitly high-risk paths require approval from the
+  human owner.
+- Temporary exception: the active ruleset does not require code-owner review.
+- Justification: the setting remains to be enabled during initial pilot
+  adoption.
+- Compensating control: protected-path pull requests remain agent-authored for
+  eligible review by `@thelarklan`; the human owner performs the deliberate
+  merge; agents never merge or use administrator bypass.
+- Owner: `@thelarklan`.
+- Review date: 2026-09-04.
+
+### Jenkins required-check gap
+
+- Rule: required repository CI must pass for the exact reviewed head before
+  merge.
+- Temporary exception: Jenkins is not yet a required status context in the
+  active ruleset.
+- Justification: the maintainer must first confirm that the context is
+  published reliably for pull-request heads.
+- Compensating control: the author and reviewers run the complete local suite
+  and merge-base diff check at the recorded exact head; the human owner merges
+  deliberately.
+- Owner: `@thelarklan`.
+- Review date: 2026-09-04.
+
+## Repository extension
+
+The repository-specific `pr-cleanup` workflow extends the shared standard. It
+verifies the exact merged pull request, synchronizes the default branch, and
+removes only the matching local and fork feature branches.

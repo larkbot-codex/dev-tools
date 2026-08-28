@@ -19,6 +19,7 @@
 /scripts/verify-pr-diff.sh      @thelarklan
 /test/hooks_test.sh             @thelarklan
 /test/jenkinsfile_test.sh       @thelarklan
+/test/pr_review_cron_test.sh    @thelarklan
 /test/pr_review_quorum_test.sh  @thelarklan
 /test/verify_pr_diff_test.sh    @thelarklan
 /bin/pr-review-cron             @thelarklan
