@@ -229,7 +229,9 @@ cron/gemini.crontab
 
 Replace `CHANGE_ME` with that WSL account's exact authenticated GitHub login.
 Each example polls every five minutes and uses `flock` to prevent overlapping
-runs. Passing an example directly to `crontab` replaces that account's entire
+runs. The examples pin Codex to GPT-5.6 Sol with high reasoning, Claude to
+Claude Opus 5 with high effort, and Antigravity to Gemini 3.7 Flash High.
+Passing an example directly to `crontab` replaces that account's entire
 existing crontab, so do that only when replacement is intended. The Gemini
 example selects Antigravity's `agy` command; remove
 `PR_REVIEW_GEMINI_DRIVER=agy` to use Gemini CLI. Before enabling a schedule,
@@ -249,6 +251,12 @@ Logs are written to `~/.local/state/pr-review/cron.log`. Useful overrides:
 | `PR_REVIEW_TIMEOUT` | `45m` | Maximum time for one provider invocation. |
 | `PR_REVIEW_WORK_ROOT` | `~/.local/share/pr-review/work` | Provider working directory. |
 | `PR_REVIEW_GEMINI_DRIVER` | `gemini` | Gemini adapter: `gemini` or `agy`. |
+| `PR_REVIEW_CODEX_MODEL` | `gpt-5.6-sol` | Codex model pin. |
+| `PR_REVIEW_CODEX_EFFORT` | `high` | Codex reasoning-effort pin. |
+| `PR_REVIEW_CLAUDE_MODEL` | `claude-opus-5` | Claude model pin. |
+| `PR_REVIEW_CLAUDE_EFFORT` | `high` | Claude effort pin. |
+| `PR_REVIEW_ANTIGRAVITY_MODEL` | `gemini-3.7-flash-high` | Antigravity model pin. |
+| `PR_REVIEW_ANTIGRAVITY_EFFORT` | `high` | Antigravity reasoning-effort pin. |
 | `PR_REVIEW_CODEX_BIN` | `codex` on `PATH` | Codex executable override. |
 | `PR_REVIEW_CLAUDE_BIN` | `claude` on `PATH` | Claude executable override. |
 | `PR_REVIEW_GEMINI_BIN` | Selected driver on `PATH` | Gemini/Antigravity executable override. |

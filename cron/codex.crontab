@@ -1,4 +1,4 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-*/5 * * * * /usr/bin/flock -n "$HOME/.cache/pr-review/cron.lock" /usr/bin/env PR_REVIEW_PROVIDER=codex PR_REVIEW_REVIEWER=CHANGE_ME "$HOME/.local/bin/pr-review-cron"
+*/5 * * * * /usr/bin/flock -n "$HOME/.cache/pr-review/cron.lock" /usr/bin/env PR_REVIEW_PROVIDER=codex PR_REVIEW_REVIEWER=CHANGE_ME PR_REVIEW_CODEX_MODEL=gpt-5.6-sol PR_REVIEW_CODEX_EFFORT=high "$HOME/.local/bin/pr-review-cron"
