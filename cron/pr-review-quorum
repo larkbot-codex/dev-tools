@@ -1,0 +1,7 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Install with: crontab -e
+# The environment file is mode 600 and contains the values documented in
+# docs/review-quorum.md. The private key is referenced by path, never embedded.
+* * * * * /usr/bin/flock -n "$HOME/.cache/pr-review-quorum/cron.lock" /usr/bin/env QUORUM_CONFIG_FILE="$HOME/.config/dev-tools/pr-review-quorum.env" "$HOME/.local/bin/pr-review-quorum" >>"$HOME/.local/state/pr-review-quorum/cron.log" 2>&1

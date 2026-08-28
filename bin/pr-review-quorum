@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_file="${QUORUM_CONFIG_FILE:-}"
+if [[ -n "$config_file" ]]; then
+    [[ -f "$config_file" ]] || {
+        printf 'pr-review-quorum: QUORUM_CONFIG_FILE does not name a readable file\n' >&2
+        exit 1
+    }
+    [[ -z "$(find "$config_file" -maxdepth 0 -perm /077 -print -quit)" ]] || {
+        printf 'pr-review-quorum: configuration permissions are too broad; run chmod 600 on it\n' >&2
+        exit 1
+    }
+    set -a
+    # shellcheck disable=SC1090 # This explicit, private deployment file is trusted input.
+    source "$config_file"
+    set +a
+fi
+
+check_name="${QUORUM_CHECK_NAME:-bot-review-quorum}"
+api_url="${QUORUM_API_URL:-https://api.github.com}"
+curl_bin="${QUORUM_CURL_BIN:-curl}"
+
+quorum_error() {
+    printf 'pr-review-quorum: %s\n' "$*" >&2
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        quorum_error "required command is not installed: $1"
+        return 1
+    }
+}
+
+base64url() {
+    openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+make_app_jwt() {
+    local now issued expires header payload unsigned signature
+    now=$(date +%s)
+    issued=$((now - 60))
+    expires=$((now + 540))
+    header=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | base64url)
+    payload=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' \
+        "$issued" "$expires" "$QUORUM_APP_ID" | base64url)
+    unsigned="$header.$payload"
+    signature=$(printf '%s' "$unsigned" |
+        openssl dgst -sha256 -sign "$QUORUM_PRIVATE_KEY_FILE" -binary |
+        base64url)
+    printf '%s.%s\n' "$unsigned" "$signature"
+}
+
+github_request() {
+    local method="$1" path="$2" token="$3" body="${4:-}"
+    local -a args
+    args=(-fsS -X "$method"
+        -H 'Accept: application/vnd.github+json'
+        -H 'X-GitHub-Api-Version: 2022-11-28'
+        -H @-
+        -H 'User-Agent: thelarklan-bot-review-quorum')
+    if [[ "$method" == GET ]]; then
+        args+=(--retry 2 --retry-delay 1)
+    fi
+    if [[ -n "$body" ]]; then
+        args+=(-H 'Content-Type: application/json' --data-binary "$body")
+    fi
+    printf 'Authorization: Bearer %s\n' "$token" |
+        "$curl_bin" "${args[@]}" "$api_url$path"
+}
+
+collect_pages() {
+    local path="$1" filter="$2" page=1 response items count combined='[]'
+    local separator='?'
+    [[ "$path" == *'?'* ]] && separator='&'
+
+    while :; do
+        response=$(github_request GET "${path}${separator}per_page=100&page=$page" \
+            "$installation_token") || return 1
+        items=$(jq -ce "$filter" <<<"$response") || return 1
+        count=$(jq -r 'length' <<<"$items") || return 1
+        combined=$(jq -cn --argjson current "$combined" --argjson next "$items" \
+            '$current + $next') || return 1
+        ((count < 100)) && break
+        page=$((page + 1))
+    done
+
+    printf '%s\n' "$combined"
+}
+
+evaluate_quorum() {
+    local pull_file="$1" reviews_file="$2" default_branch="$3" bot_ids_json="$4" owner_id="$5"
+    jq -cn \
+        --slurpfile pull "$pull_file" \
+        --slurpfile reviews "$reviews_file" \
+        --arg default_branch "$default_branch" \
+        --argjson bots "$bot_ids_json" \
+        --argjson owner "$owner_id" '
+        def decisive:
+          (.state // "" | ascii_upcase) as $state
+          | select($state == "APPROVED" or $state == "CHANGES_REQUESTED" or $state == "DISMISSED")
+          | {
+              id: (.id // 0),
+              user_id: (.user.id // 0),
+              login: (.user.login // "unknown"),
+              state: $state,
+              commit_id: (.commit_id // ""),
+              submitted_at: (.submitted_at // "")
+            };
+        ($pull[0]) as $pr
+        | ($reviews[0] | map(decisive) | sort_by(.submitted_at, .id)
+            | reduce .[] as $review ({}; .[($review.user_id | tostring)] = $review)) as $latest
+        | ($pr.head.sha // "") as $head
+        | ($pr.user.id // 0) as $author
+        | ($bots | map(select(. != $author))) as $eligible
+        | ($eligible | map(
+            . as $id
+            | ($latest[($id | tostring)] // {
+                user_id: $id, login: "unknown", state: "MISSING", commit_id: "", submitted_at: ""
+              })
+            | . + {exact_head: ($head != "" and .state == "APPROVED" and .commit_id == $head)}
+          )) as $observed
+        | ($observed | map(select(.exact_head)) | length) as $approval_count
+        | if $head == "" then
+            {conclusion:"failure", title:"Pull request head is missing", summary:"The quorum gate cannot validate approvals without a non-empty pull-request head SHA."}
+          elif ($pr.state // "" | ascii_downcase) != "open" then
+            {conclusion:"failure", title:"Pull request is not open", summary:"The quorum gate only passes open pull requests."}
+          elif ($pr.draft // false) then
+            {conclusion:"failure", title:"Pull request is a draft", summary:"Mark the pull request ready before quorum can pass."}
+          elif ($pr.base.ref // "") != $default_branch then
+            {conclusion:"failure", title:"Pull request targets an unprotected branch", summary:("Expected base " + $default_branch + ", observed " + ($pr.base.ref // "unknown") + ".")}
+          elif $author != $owner and ($bots | index($author)) == null then
+            {conclusion:"failure", title:"Author is outside the trusted author set", summary:("Author ID " + ($author | tostring) + " is neither the configured repository owner nor one of the three bot accounts.")}
+          elif $approval_count >= 2 then
+            {conclusion:"success", title:"Exact-head bot quorum satisfied", summary:((if $author == $owner then "Two configured bot accounts" else "Both non-author bot accounts" end) + " approved head " + $head + ".")}
+          else
+            {conclusion:"failure", title:"Exact-head bot quorum is incomplete", summary:("Required bot review state: " + ($observed | map((.user_id | tostring) + "=" + .state + (if .commit_id == "" then "" else "@" + .commit_id end)) | join(", ")) + ". Approvals from the author, repository owner, or any other account do not count.")}
+          end
+        | . + {
+            head_sha:$head,
+            author_id:$author,
+            eligible_reviewer_ids:$eligible,
+            required_approval_count:2,
+            observed:$observed
+          }
+    '
+}
+
+publish_check() {
+    local repository="$1" pull_number="$2" pull_url="$3" evaluation="$4"
+    local head conclusion title summary encoded_check_name existing existing_id existing_conclusion existing_summary body response check_id
+    head=$(jq -er '.head_sha' <<<"$evaluation") || return 1
+    conclusion=$(jq -er '.conclusion' <<<"$evaluation") || return 1
+    title=$(jq -er '.title' <<<"$evaluation") || return 1
+    summary=$(jq -er '.summary' <<<"$evaluation") || return 1
+    encoded_check_name=$(printf '%s' "$check_name" | jq -sRr @uri) || return 1
+
+    existing=$(github_request GET \
+        "/repos/$repository/commits/$head/check-runs?check_name=$encoded_check_name&filter=latest" \
+        "$installation_token") || existing='{"check_runs":[]}'
+    existing_id=$(jq -r --argjson app "$QUORUM_APP_ID" \
+        '[.check_runs[] | select(.app.id == $app)] | first | .id // empty' <<<"$existing")
+    existing_conclusion=$(jq -r --argjson app "$QUORUM_APP_ID" \
+        '[.check_runs[] | select(.app.id == $app)] | first | .conclusion // empty' <<<"$existing")
+    existing_summary=$(jq -r --argjson app "$QUORUM_APP_ID" \
+        '[.check_runs[] | select(.app.id == $app)] | first | .output.summary // empty' <<<"$existing")
+    if [[ -n "$existing_id" && "$existing_conclusion" == "$conclusion" && \
+        "$existing_summary" == "$summary" ]]; then
+        check_id="$existing_id"
+    else
+        body=$(jq -cn \
+            --arg name "$check_name" \
+            --arg head "$head" \
+            --arg conclusion "$conclusion" \
+            --arg title "$title" \
+            --arg summary "$summary" \
+            --arg details "$pull_url" \
+            '{name:$name,head_sha:$head,status:"completed",conclusion:$conclusion,details_url:$details,output:{title:$title,summary:$summary}}')
+        response=$(github_request POST "/repos/$repository/check-runs" \
+            "$installation_token" "$body") || return 1
+        check_id=$(jq -er '.id' <<<"$response") || return 1
+    fi
+
+    jq -cn \
+        --arg repository "$repository" \
+        --argjson pull "$pull_number" \
+        --arg head "$head" \
+        --argjson author "$(jq -r '.author_id' <<<"$evaluation")" \
+        --argjson eligible "$(jq -c '.eligible_reviewer_ids' <<<"$evaluation")" \
+        --argjson required_count "$(jq -r '.required_approval_count' <<<"$evaluation")" \
+        --argjson observed "$(jq -c '.observed' <<<"$evaluation")" \
+        --arg conclusion "$conclusion" \
+        --argjson check "$check_id" \
+        '{repository:$repository,pull:$pull,head:$head,author_id:$author,eligible_reviewer_ids:$eligible,required_approval_count:$required_count,observed:$observed,conclusion:$conclusion,check_run_id:$check}'
+}
+
+validate_configuration() {
+    local key_permissions bot_ids_json
+    for command_name in "$curl_bin" jq openssl date find mktemp; do
+        require_command "$command_name" || return 1
+    done
+    [[ "${QUORUM_APP_ID:-}" =~ ^[0-9]+$ ]] || {
+        quorum_error 'QUORUM_APP_ID must be a numeric GitHub App ID'
+        return 1
+    }
+    [[ "${QUORUM_INSTALLATION_ID:-}" =~ ^[0-9]+$ ]] || {
+        quorum_error 'QUORUM_INSTALLATION_ID must be a numeric installation ID'
+        return 1
+    }
+    [[ "${QUORUM_OWNER_ID:-}" =~ ^[0-9]+$ ]] || {
+        quorum_error 'QUORUM_OWNER_ID must be the numeric repository-owner ID'
+        return 1
+    }
+    [[ -f "${QUORUM_PRIVATE_KEY_FILE:-}" ]] || {
+        quorum_error 'QUORUM_PRIVATE_KEY_FILE must name the downloaded GitHub App private key'
+        return 1
+    }
+    key_permissions=$(find "$QUORUM_PRIVATE_KEY_FILE" -maxdepth 0 -perm /077 -print -quit)
+    [[ -z "$key_permissions" ]] || {
+        quorum_error 'private key permissions are too broad; run chmod 600 on the key'
+        return 1
+    }
+    bot_ids_json=$(jq -cn --arg ids "${QUORUM_BOT_IDS:-}" \
+        '$ids | split(",") | map(select(length > 0) | tonumber)') || {
+        quorum_error 'QUORUM_BOT_IDS must contain three comma-separated numeric account IDs'
+        return 1
+    }
+    [[ "$(jq -r 'length == 3 and (unique | length == 3)' <<<"$bot_ids_json")" == true ]] || {
+        quorum_error 'QUORUM_BOT_IDS must contain exactly three distinct account IDs'
+        return 1
+    }
+    [[ "$(jq -r --argjson owner "$QUORUM_OWNER_ID" 'index($owner) == null' <<<"$bot_ids_json")" == true ]] || {
+        quorum_error 'the repository owner must not appear in QUORUM_BOT_IDS'
+        return 1
+    }
+    printf '%s\n' "$bot_ids_json"
+}
+
+main() {
+    local bot_ids_json jwt token_response installation_token repositories failures=0
+    local repository full_name default_branch owner_id pulls pull_number pull_file reviews_file reviews evaluation fresh_pull fresh_head pull_url
+
+    bot_ids_json=$(validate_configuration) || return 1
+    jwt=$(make_app_jwt) || {
+        quorum_error 'could not sign a GitHub App JWT'
+        return 1
+    }
+    token_response=$(github_request POST "/app/installations/$QUORUM_INSTALLATION_ID/access_tokens" "$jwt") || {
+        quorum_error 'could not create an installation access token'
+        return 1
+    }
+    installation_token=$(jq -er '.token' <<<"$token_response") || {
+        quorum_error 'GitHub did not return an installation access token'
+        return 1
+    }
+    repositories=$(collect_pages '/installation/repositories' '.repositories') || {
+        quorum_error 'could not list installation repositories'
+        return 1
+    }
+    quorum_work_dir=$(mktemp -d)
+    trap cleanup_work_dir EXIT
+
+    while IFS= read -r repository; do
+        full_name=$(jq -er '.full_name' <<<"$repository") || {
+            failures=$((failures + 1))
+            continue
+        }
+        owner_id=$(jq -er '.owner.id' <<<"$repository") || {
+            failures=$((failures + 1))
+            continue
+        }
+        [[ "$owner_id" == "$QUORUM_OWNER_ID" ]] || continue
+        default_branch=$(jq -er '.default_branch' <<<"$repository") || {
+            failures=$((failures + 1))
+            continue
+        }
+        pulls=$(collect_pages "/repos/$full_name/pulls?state=open" '.') || {
+            quorum_error "could not list open pull requests for $full_name"
+            failures=$((failures + 1))
+            continue
+        }
+        while IFS= read -r pull_number; do
+            pull_file="$quorum_work_dir/pull.json"
+            reviews_file="$quorum_work_dir/reviews.json"
+            if ! github_request GET "/repos/$full_name/pulls/$pull_number" \
+                "$installation_token" >"$pull_file"; then
+                quorum_error "could not read $full_name#$pull_number"
+                failures=$((failures + 1))
+                continue
+            fi
+            pull_url=$(jq -r '.html_url // ""' "$pull_file")
+            if ! reviews=$(collect_pages "/repos/$full_name/pulls/$pull_number/reviews" '.'); then
+                reviews='[]'
+                quorum_error "could not read reviews for $full_name#$pull_number; publishing failure"
+                failures=$((failures + 1))
+            fi
+            printf '%s\n' "$reviews" >"$reviews_file"
+            evaluation=$(evaluate_quorum "$pull_file" "$reviews_file" \
+                "$default_branch" "$bot_ids_json" "$QUORUM_OWNER_ID") || {
+                quorum_error "could not evaluate $full_name#$pull_number"
+                failures=$((failures + 1))
+                continue
+            }
+            fresh_pull=$(github_request GET "/repos/$full_name/pulls/$pull_number" \
+                "$installation_token") || {
+                quorum_error "could not re-read $full_name#$pull_number before publishing"
+                failures=$((failures + 1))
+                continue
+            }
+            fresh_head=$(jq -er '.head.sha' <<<"$fresh_pull") || {
+                failures=$((failures + 1))
+                continue
+            }
+            if [[ "$fresh_head" != "$(jq -r '.head_sha' <<<"$evaluation")" || \
+                "$(jq -r '.state' <<<"$fresh_pull")" != open ]]; then
+                quorum_error "$full_name#$pull_number changed during evaluation; refusing to publish success"
+                failures=$((failures + 1))
+                continue
+            fi
+            publish_check "$full_name" "$pull_number" "$pull_url" "$evaluation" || {
+                quorum_error "could not publish the check for $full_name#$pull_number"
+                failures=$((failures + 1))
+            }
+        done < <(jq -r '.[].number' <<<"$pulls")
+    done < <(jq -c '.[]' <<<"$repositories")
+
+    ((failures == 0)) || return 1
+}
+
+quorum_work_dir=''
+cleanup_work_dir() {
+    [[ -z "$quorum_work_dir" ]] || rm -rf -- "$quorum_work_dir"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
