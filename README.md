@@ -25,7 +25,9 @@ review record.
 - [GitHub CLI](https://cli.github.com/) authenticated to the target host for
   commands that use the GitHub API (`fork-clone`, `pr-create`, `pr-comment`,
   and `pr-cleanup`)
-- Standard Linux command-line tools (`awk`, `find`, `grep`, and `install`)
+- ShellCheck for repository verification and the optional Git hooks
+- Standard Linux command-line tools (`awk`, `find`, `grep`, `install`, and
+  `tar`)
 
 ## Install
 
@@ -199,16 +201,28 @@ The uninstaller removes only the dev-tools helper. If other shell extensions
 remain in `~/.bashrc.d`, their directory and loader are preserved. If the
 directory becomes empty, the installer-owned loader and directory are removed.
 
+## Git hooks
+
+Enable the repository-owned hooks in this checkout with:
+
+```bash
+./install-hooks.sh
+```
+
+The installer changes only this repository's `core.hooksPath` and refuses to
+replace another configured hooks path. The pre-commit hook rejects staged
+whitespace errors and runs ShellCheck against the staged versions of changed
+shell files, so unstaged edits do not affect the result.
+
+The pre-push hook extracts every distinct revision being pushed into a temporary
+snapshot and runs `scripts/verify.sh` there. This verifies the exact published
+content rather than any uncommitted worktree changes. Deleting a remote ref does
+not run the suite.
+
 ## Test
 
 ```bash
-shellcheck bashrc.d/*.sh install.sh uninstall.sh test/*.sh
-bash test/install_help_test.sh
-bash test/fork_sync_test.sh
-bash test/pr_create_test.sh
-bash test/rewrite_comment_test.sh
-bash test/cleanup_test.sh
-bash test/jenkinsfile_test.sh
+bash scripts/verify.sh
 ```
 
 The tests use temporary home directories and local bare Git repositories. They
