@@ -16,10 +16,11 @@ contract in [automatic-merge.md](automatic-merge.md). Until that gate is
 deployed and verified, a maintainer merges deliberately.
 
 The human owner must approve changes to ownership, review policy, CI and local
-verification enforcement, scheduled review execution, or the automatic-merge
-contract. The local `CODEOWNERS` file identifies those paths. Agent approvals
-remain required where the organization ruleset applies; they do not substitute
-for the human approval on a protected path.
+verification enforcement, scheduled review execution, the trusted quorum
+evaluator and its deployment, or the automatic-merge contract. The local
+`CODEOWNERS` file identifies those paths. Agent approvals remain required where
+the organization ruleset applies; they do not substitute for the human approval
+on a protected path.
 
 ## Current enforcement
 
