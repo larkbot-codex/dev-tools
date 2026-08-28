@@ -18,6 +18,7 @@ grep -Eq "sh ['\"]bash scripts/verify[.]sh['\"]" "$jenkinsfile" || fail "pipelin
 verification_script="$project_dir/scripts/verify.sh"
 shellcheck_step=$(grep -E '^shellcheck ' "$verification_script" || true)
 [[ "$shellcheck_step" == *'bashrc.d/*.sh'* ]] || fail "ShellCheck does not cover every bashrc helper"
+[[ "$shellcheck_step" == *'bin/*'* ]] || fail "ShellCheck does not cover installed executables"
 [[ "$shellcheck_step" == *'install.sh'* ]] || fail "ShellCheck does not cover the installer"
 [[ "$shellcheck_step" == *'uninstall.sh'* ]] || fail "ShellCheck does not cover the uninstaller"
 [[ "$shellcheck_step" == *'install-hooks.sh'* ]] || fail "ShellCheck does not cover the hook installer"

@@ -209,6 +209,49 @@ command and pass each emitted work item into its own review adapter. Provider
 credentials, model selection, prompts, and review submission stay outside this
 helper.
 
+## Run scheduled agent reviews
+
+`./install.sh` also installs `pr-review-cron` in `~/.local/bin`. The runner
+calls `pr-watch`, gives each work item to Codex, Claude, Gemini CLI, or
+Antigravity, and accepts the result only after GitHub reports a new review at
+the current head. Watcher state is committed only after that confirmation, so
+a failed provider run is retried. Events marked `ESCALATE` are recorded and
+left for a human instead of starting another autonomous review round.
+
+Open `crontab -e` in the matching WSL account and copy the environment and job
+lines from one staggered example:
+
+```bash
+cron/codex.crontab
+cron/claude.crontab
+cron/gemini.crontab
+```
+
+Each example polls every five minutes and uses `flock` to prevent overlapping
+runs. Passing an example directly to `crontab` replaces that account's entire
+existing crontab, so do that only when replacement is intended. The Gemini
+example selects Antigravity's `agy` command; remove
+`PR_REVIEW_GEMINI_DRIVER=agy` to use Gemini CLI. Before enabling a schedule,
+authenticate `gh` and the selected provider CLI in that WSL account and run
+the command once interactively. These adapters grant the provider permission
+to use tools without prompting, so use a dedicated account and restrict
+`PR_REVIEW_OWNER` to repositories whose pull-request contents you trust.
+
+Logs are written to `~/.local/state/pr-review/cron.log`. Useful overrides:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PR_REVIEW_PROVIDER` | Required | `codex`, `claude`, or `gemini`. |
+| `PR_REVIEW_OWNER` | `PR_WATCH_OWNER` or `thelarklan` | Account whose pull requests are reviewed. |
+| `PR_REVIEW_REVIEWER` | Authenticated `gh` login | Fail-closed reviewer identity assertion. |
+| `PR_REVIEW_MAX_FOLLOWUPS` | `2` | Autonomous conversation rounds per head. |
+| `PR_REVIEW_TIMEOUT` | `45m` | Maximum time for one provider invocation. |
+| `PR_REVIEW_WORK_ROOT` | `~/.local/share/pr-review/work` | Provider working directory. |
+| `PR_REVIEW_GEMINI_DRIVER` | `gemini` | Gemini adapter: `gemini` or `agy`. |
+| `PR_REVIEW_CODEX_BIN` | `codex` on `PATH` | Codex executable override. |
+| `PR_REVIEW_CLAUDE_BIN` | `claude` on `PATH` | Claude executable override. |
+| `PR_REVIEW_GEMINI_BIN` | Selected driver on `PATH` | Gemini/Antigravity executable override. |
+
 GitHub search exposes at most 1,000 results and the review-thread query reads
 at most 100 comments per thread. Reaching either limit fails loudly rather than
 silently omitting work.
