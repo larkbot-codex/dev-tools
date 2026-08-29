@@ -63,10 +63,7 @@ repository entries, and empty arrays are rejected.
       ".github/workflows/", "AGENTS.md", "Jenkinsfile",
       "docs/automatic-merge.md", "docs/human-verification.md",
       "docs/review-policy.md", "docs/review-quorum.md", ".githooks/",
-      "install-hooks.sh", "install.sh", "uninstall.sh", "scripts/verify.sh",
-      "scripts/verify-pr-diff.sh", "test/hooks_test.sh",
-      "test/jenkinsfile_test.sh", "test/pr_review_cron_test.sh",
-      "test/pr_review_quorum_test.sh", "test/verify_pr_diff_test.sh",
+      "install-hooks.sh", "install.sh", "uninstall.sh", "scripts/", "test/",
       "bin/pr-review-cron", "bin/pr-review-quorum", "cron/"
     ]
   },

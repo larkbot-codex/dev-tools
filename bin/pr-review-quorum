@@ -178,6 +178,33 @@ classify_protected_change() {
     '
 }
 
+read_protected_classification() {
+    local repository="$1" pull_number="$2" pull_json="$3" protected_paths_json="$4"
+    local files expected_files actual_files
+
+    files=$(collect_pages "/repos/$repository/pulls/$pull_number/files" \
+        '[.[].filename]') || {
+        quorum_error "could not read files for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    expected_files=$(jq -er '.changed_files' <<<"$pull_json") || {
+        quorum_error "incomplete file list for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    actual_files=$(jq -er 'length' <<<"$files") || {
+        quorum_error "incomplete file list for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    [[ "$actual_files" == "$expected_files" ]] || {
+        quorum_error "incomplete file list for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    classify_protected_change "$repository" "$files" "$protected_paths_json" || {
+        quorum_error "could not classify protected paths for $repository#$pull_number; publishing failure"
+        return 1
+    }
+}
+
 repository_auto_merge_enabled() {
     local repository="$1" protected_paths_json="$2"
     jq -r --arg repository "$repository" '.[$repository].auto_merge' \
@@ -345,7 +372,7 @@ validate_configuration() {
 
 main() {
     local bot_ids_json protected_paths_json jwt token_response installation_token repositories failures=0
-    local repository full_name default_branch owner_id pulls pull_number pull_file reviews_file reviews evaluation fresh_pull fresh_reviews fresh_head pull_url check_output auto_merge_action files protected classification_known repository_auto_merge expected_files actual_files
+    local repository full_name default_branch owner_id pulls pull_number pull_file reviews_file reviews evaluation fresh_pull fresh_reviews fresh_head pull_url check_output auto_merge_action protected classification_known repository_auto_merge
 
     bot_ids_json=$(validate_configuration) || return 1
     protected_paths_json=$(jq -ce '.' "$protected_paths_file") || return 1
@@ -405,24 +432,10 @@ main() {
             pull_url=$(jq -r '.html_url // ""' "$pull_file")
             classification_known=true
             protected=false
-            if ! files=$(collect_pages "/repos/$full_name/pulls/$pull_number/files" \
-                '[.[].filename]'); then
-                files='[]'
-                classification_known=false
-                quorum_error "could not read files for $full_name#$pull_number; publishing failure"
-                failures=$((failures + 1))
-            elif ! expected_files=$(jq -er '.changed_files' "$pull_file") || \
-                ! actual_files=$(jq -er 'length' <<<"$files") || \
-                [[ "$actual_files" != "$expected_files" ]]; then
+            if ! protected=$(read_protected_classification "$full_name" "$pull_number" \
+                "$(<"$pull_file")" "$protected_paths_json"); then
                 classification_known=false
                 protected=false
-                quorum_error "incomplete file list for $full_name#$pull_number; publishing failure"
-                failures=$((failures + 1))
-            elif ! protected=$(classify_protected_change "$full_name" "$files" \
-                "$protected_paths_json"); then
-                classification_known=false
-                protected=false
-                quorum_error "could not classify protected paths for $full_name#$pull_number; publishing failure"
                 failures=$((failures + 1))
             fi
             if ! reviews=$(collect_pages "/repos/$full_name/pulls/$pull_number/reviews" '.'); then
@@ -444,15 +457,23 @@ main() {
                 failures=$((failures + 1))
                 continue
             }
+            jq -er '.head.sha' <<<"$fresh_pull" >/dev/null || {
+                failures=$((failures + 1))
+                continue
+            }
+            classification_known=true
+            protected=false
+            if ! protected=$(read_protected_classification "$full_name" "$pull_number" \
+                "$fresh_pull" "$protected_paths_json"); then
+                classification_known=false
+                protected=false
+                failures=$((failures + 1))
+            fi
             if ! fresh_reviews=$(collect_pages "/repos/$full_name/pulls/$pull_number/reviews" '.'); then
                 fresh_reviews='[]'
                 quorum_error "could not re-read reviews for $full_name#$pull_number; publishing failure"
                 failures=$((failures + 1))
             fi
-            fresh_head=$(jq -er '.head.sha' <<<"$fresh_pull") || {
-                failures=$((failures + 1))
-                continue
-            }
             printf '%s\n' "$fresh_pull" >"$pull_file"
             printf '%s\n' "$fresh_reviews" >"$reviews_file"
             evaluation=$(evaluate_quorum "$pull_file" "$reviews_file" \

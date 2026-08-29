@@ -16,15 +16,17 @@ and accounts outside the cohort never substitute for a required agent review.
 
 An eligible pull request is open, non-draft, targets the protected upstream
 default branch, and is authored by the owner or one cohort agent. A missing or
-dismissed review, `CHANGES_REQUESTED`, an old review commit, a new head, outside
-author, API error, incomplete pagination, or ambiguous identity fails the
-trusted check. GitHub separately requires repository CI, conversation
+dismissed cohort review, cohort `CHANGES_REQUESTED`, an old review commit, a new
+head, outside author, API error, incomplete pagination, or ambiguous identity
+fails the trusted check. GitHub separately requires repository CI, conversation
 resolution, current base, native reviews, and human code-owner approval for
 protected paths. The App classifies the complete changed-file list against a
 private per-repository exact-path and directory-prefix map. A protected change
 also requires the configured human owner's exact-head approval; a routine bot
 change publishes failure and remains disarmed if any owner approval exists,
-until that approval is dismissed.
+until that approval is dismissed. An owner `CHANGES_REQUESTED` review on a
+routine bot change is outside the trusted cohort calculation; GitHub's native
+review rule blocks the merge until that request is resolved.
 
 ## Trusted App boundary
 
@@ -41,11 +43,13 @@ account IDs, the protected-path map, the App private key, and installation
 configuration outside the repository. Pull-request-controlled files never
 define trusted identities or policy.
 
-For every open pull request, the evaluator reads every review page, evaluates
-the latest decisive state for each stable account ID, then re-reads both the
-pull request and the complete review set. It publishes the result on that exact
-head. Before auto-merge reconciliation it re-reads the pull request again and
-refuses the mutation if the head or state changed.
+For every open pull request, the evaluator reads the complete changed-file list
+and every review page, then evaluates the latest decisive state for each stable
+account ID. Immediately before publishing, it re-reads the pull request, the
+complete changed-file list, and the complete review set, and reclassifies the
+fresh files. It publishes the result on that exact head. Before auto-merge
+reconciliation it re-reads the pull request again and refuses the mutation if
+the head or state changed.
 
 With global `QUORUM_AUTO_MERGE=1` and the repository's private `auto_merge`
 switch set to `true`, a successful exact-head quorum arms GitHub squash

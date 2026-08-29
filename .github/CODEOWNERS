@@ -15,13 +15,8 @@
 /install-hooks.sh               @thelarklan
 /install.sh                     @thelarklan
 /uninstall.sh                   @thelarklan
-/scripts/verify.sh              @thelarklan
-/scripts/verify-pr-diff.sh      @thelarklan
-/test/hooks_test.sh             @thelarklan
-/test/jenkinsfile_test.sh       @thelarklan
-/test/pr_review_cron_test.sh    @thelarklan
-/test/pr_review_quorum_test.sh  @thelarklan
-/test/verify_pr_diff_test.sh    @thelarklan
+/scripts/                       @thelarklan
+/test/                          @thelarklan
 /bin/pr-review-cron             @thelarklan
 /bin/pr-review-quorum           @thelarklan
 /cron/                          @thelarklan

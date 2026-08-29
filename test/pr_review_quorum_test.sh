@@ -176,25 +176,53 @@ case "\$method \$url" in
         printf '%s\n' '[{"number":7}]'
         ;;
     *'/repos/thelarklan/example/pulls/7/reviews?per_page=100&page=1')
+        review_head=exact-head
+        if [[ "\${FAKE_HEAD_CHANGE:-0}" == 1 ]]; then
+            review_head=head-B
+        fi
         if [[ "\${FAKE_APPROVALS:-complete}" == complete ]]; then
-            printf '%s\n' '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:01Z"},{"id":2,"user":{"id":320627233,"login":"larkbot-gemini"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:02Z"}]'
+            printf '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"%s","submitted_at":"2026-08-28T10:00:01Z"},{"id":2,"user":{"id":320627233,"login":"larkbot-gemini"},"state":"APPROVED","commit_id":"%s","submitted_at":"2026-08-28T10:00:02Z"}]\n' "\$review_head" "\$review_head"
         elif [[ "\${FAKE_APPROVALS:-complete}" == owner ]]; then
-            printf '%s\n' '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:01Z"},{"id":2,"user":{"id":320627233,"login":"larkbot-gemini"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:02Z"},{"id":3,"user":{"id":166922787,"login":"thelarklan"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:03Z"}]'
+            printf '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"%s","submitted_at":"2026-08-28T10:00:01Z"},{"id":2,"user":{"id":320627233,"login":"larkbot-gemini"},"state":"APPROVED","commit_id":"%s","submitted_at":"2026-08-28T10:00:02Z"},{"id":3,"user":{"id":166922787,"login":"thelarklan"},"state":"APPROVED","commit_id":"%s","submitted_at":"2026-08-28T10:00:03Z"}]\n' "\$review_head" "\$review_head" "\$review_head"
         else
-            printf '%s\n' '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"exact-head","submitted_at":"2026-08-28T10:00:01Z"}]'
+            printf '[{"id":1,"user":{"id":104110997,"login":"larkbot-claude"},"state":"APPROVED","commit_id":"%s","submitted_at":"2026-08-28T10:00:01Z"}]\n' "\$review_head"
         fi
         ;;
     *'/repos/thelarklan/example/pulls/7/files?per_page=100&page=1')
-        printf '%s\n' '[{"filename":"README.md"}]'
-        ;;
-    *'/repos/thelarklan/example/pulls/7')
-        if [[ "\${FAKE_APPROVALS:-complete}" == complete ]]; then
-            printf '{"node_id":"PR_test","auto_merge":null,"changed_files":%s,"state":"open","draft":false,"html_url":"https://github.com/thelarklan/example/pull/7","user":{"id":270192887},"head":{"sha":"exact-head"},"base":{"ref":"main"}}\n' "\${FAKE_CHANGED_FILES:-1}"
+        if [[ "\${FAKE_HEAD_CHANGE:-0}" == 1 ]]; then
+            file_calls=0
+            [[ ! -f "\$FAKE_FILE_COUNTER" ]] || read -r file_calls <"\$FAKE_FILE_COUNTER"
+            file_calls=\$((file_calls + 1))
+            printf '%s\n' "\$file_calls" >"\$FAKE_FILE_COUNTER"
+            if ((file_calls == 1)); then
+                printf '%s\n' '[{"filename":"README.md"}]'
+            else
+                printf '%s\n' '[{"filename":".github/workflows/verify.yml"}]'
+            fi
         else
-            printf '{"node_id":"PR_test","auto_merge":{"enabled_by":{"login":"app"}},"changed_files":%s,"state":"open","draft":false,"html_url":"https://github.com/thelarklan/example/pull/7","user":{"id":270192887},"head":{"sha":"exact-head"},"base":{"ref":"main"}}\n' "\${FAKE_CHANGED_FILES:-1}"
+            printf '%s\n' '[{"filename":"README.md"}]'
         fi
         ;;
-    *'/repos/thelarklan/example/commits/exact-head/check-runs?check_name=bot-review-quorum&filter=latest')
+    *'/repos/thelarklan/example/pulls/7')
+        pull_head=exact-head
+        if [[ "\${FAKE_HEAD_CHANGE:-0}" == 1 ]]; then
+            pull_calls=0
+            [[ ! -f "\$FAKE_PULL_COUNTER" ]] || read -r pull_calls <"\$FAKE_PULL_COUNTER"
+            pull_calls=\$((pull_calls + 1))
+            printf '%s\n' "\$pull_calls" >"\$FAKE_PULL_COUNTER"
+            if ((pull_calls == 1)); then
+                pull_head=head-A
+            else
+                pull_head=head-B
+            fi
+        fi
+        if [[ "\${FAKE_APPROVALS:-complete}" == complete ]]; then
+            printf '{"node_id":"PR_test","auto_merge":null,"changed_files":%s,"state":"open","draft":false,"html_url":"https://github.com/thelarklan/example/pull/7","user":{"id":270192887},"head":{"sha":"%s"},"base":{"ref":"main"}}\n' "\${FAKE_CHANGED_FILES:-1}" "\$pull_head"
+        else
+            printf '{"node_id":"PR_test","auto_merge":{"enabled_by":{"login":"app"}},"changed_files":%s,"state":"open","draft":false,"html_url":"https://github.com/thelarklan/example/pull/7","user":{"id":270192887},"head":{"sha":"%s"},"base":{"ref":"main"}}\n' "\${FAKE_CHANGED_FILES:-1}" "\$pull_head"
+        fi
+        ;;
+    *'/repos/thelarklan/example/commits/'*'/check-runs?check_name=bot-review-quorum&filter=latest')
         printf '%s\n' '{"check_runs":[]}'
         ;;
     'POST '*'/repos/thelarklan/example/check-runs')
@@ -248,6 +276,25 @@ integration_output=$(GRAPHQL_LOG="$graphql_log" QUORUM_CONFIG_FILE="$config_file
     fail 'successful exact-head quorum did not arm auto-merge'
 grep -Fq 'enablePullRequestAutoMerge' "$graphql_log" || \
     fail 'successful exact-head quorum did not use the enable mutation'
+
+head_change_pull_counter="$test_dir/head-change-pulls"
+head_change_file_counter="$test_dir/head-change-files"
+before_mutations=$(wc -l <"$graphql_log")
+integration_output=$(FAKE_HEAD_CHANGE=1 \
+    FAKE_PULL_COUNTER="$head_change_pull_counter" \
+    FAKE_FILE_COUNTER="$head_change_file_counter" \
+    GRAPHQL_LOG="$graphql_log" QUORUM_CONFIG_FILE="$config_file" \
+    "$project_dir/bin/pr-review-quorum")
+[[ "$(jq -r '.head' <<<"$integration_output")" == head-B ]] || \
+    fail 'head-change fixture did not publish against the fresh head'
+[[ "$(jq -r '.protected' <<<"$integration_output")" == true ]] || \
+    fail 'head-change evaluation reused the stale routine classification'
+[[ "$(jq -r '.conclusion' <<<"$integration_output")" == failure ]] || \
+    fail 'head-change evaluation passed without fresh protected approval'
+[[ "$(<"$head_change_file_counter")" == 2 ]] || \
+    fail 'changed-file list was not re-read before publishing'
+[[ "$(wc -l <"$graphql_log")" == "$before_mutations" ]] || \
+    fail 'stale routine classification armed auto-merge on the fresh protected head'
 
 integration_output=$(FAKE_APPROVALS=missing GRAPHQL_LOG="$graphql_log" \
     QUORUM_CONFIG_FILE="$config_file" "$project_dir/bin/pr-review-quorum")
