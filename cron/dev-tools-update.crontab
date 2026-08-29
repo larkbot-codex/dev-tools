@@ -1,0 +1,4 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+17 * * * * /usr/bin/env DEV_TOOLS_UPDATE_UPSTREAM=https://github.com/thelarklan/dev-tools.git "$HOME/.local/bin/dev-tools-update"

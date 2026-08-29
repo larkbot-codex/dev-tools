@@ -505,6 +505,9 @@ dev-tools commands:
   pr-watch
       List open pull requests that need review by the authenticated account.
 
+  dev-tools-update
+      Fast-forward, verify, and reinstall from a canonical deployment checkout.
+
   pr-help
       Show this command reference.
 EOF
