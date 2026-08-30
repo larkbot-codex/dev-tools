@@ -30,19 +30,19 @@ No exception authorizes an agent or maintainer to bypass the repository rules.
 
 ## Current enforcement
 
-The ruleset audit on 2026-08-28 found an active two-approval gate with stale
-review dismissal, latest-push approval, resolved conversations, strict base
-updates, squash-only merge, and the `bot-review-quorum` check. The repository is
-personal, code-owner review is not yet required, Jenkins is not a required
-status check, and v2 auto-merge reconciliation is not enabled in the trusted
-App deployment.
+The ruleset audit on 2026-08-29 found an active two-approval gate with stale
+review dismissal, latest-push approval, code-owner review, resolved
+conversations, strict base updates, squash-only merge, and the
+`bot-review-quorum` check. The repository is personal, Jenkins is not a
+required status check, and v2 auto-merge reconciliation is not enabled in the
+trusted App deployment.
 
 Consequently, automatic merge must remain unarmed. Before this adoption is
-declared complete, the owner must enable code-owner review, add Jenkins as a
-required status check after confirming the context is published reliably,
-grant the trusted App pull-request write permission without contents or
-administration access, install the private protected-path map, and enable v2
-reconciliation after a safe gate test. The live acceptance must prove that
+declared complete, the owner must add Jenkins as a required status check after
+confirming the context is published reliably, grant the trusted App
+pull-request write permission without contents or administration access,
+install the private protected-path map, and enable v2 reconciliation after a
+safe gate test. The live acceptance must prove that
 `enablePullRequestAutoMerge` succeeds with exactly metadata read, pull-request
 read/write, and checks read/write; that GitHub attributes and performs the
 resulting squash merge; and that the App has no contents-write or direct-merge
@@ -78,19 +78,6 @@ After GitHub reports the pull request merged, run `pr-cleanup` from the verified
 feature branch.
 
 ## Exceptions
-
-### Human-approval enforcement gap
-
-- Rule: protected and explicitly high-risk paths require approval from the
-  human owner.
-- Temporary exception: the active ruleset does not require code-owner review.
-- Justification: the setting remains to be enabled during initial pilot
-  adoption.
-- Compensating control: auto-merge remains unarmed; protected-path pull requests
-  remain agent-authored for eligible review by `@thelarklan`; the human owner
-  performs any temporary deliberate merge; agents never merge or bypass rules.
-- Owner: `@thelarklan`.
-- Review date: 2026-09-04.
 
 ### Jenkins required-check gap
 

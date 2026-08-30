@@ -110,6 +110,6 @@ credentials. Tests cover each author rotation, outside and self approvals,
 stale or dismissed reviews, later change requests, drafts, wrong bases, missing
 heads, auto-merge arm and disarm mutations, and API or response failure.
 
-Until the App permission, code-owner review, every required CI context, and both
-routine and protected acceptance scenarios are verified, leave auto-merge
-unarmed and use the [human verification checklist](human-verification.md).
+Until the App permission, every required CI context, and both routine and
+protected acceptance scenarios are verified, leave auto-merge unarmed and use
+the [human verification checklist](human-verification.md).
